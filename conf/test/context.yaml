@@ -1,0 +1,5 @@
+exp_name: 'context_greedy'
+dataloader: 'val'  # 'val' for loading validation data, 'train' for loading train data
+batch_size: 50
+num_epochs: 20
+emb_space: openclip

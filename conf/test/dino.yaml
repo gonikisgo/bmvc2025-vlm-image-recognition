@@ -1,0 +1,8 @@
+model: 'DINOv2'
+exp_name: 'imagenet_dino_1000'
+mode: 'dino'
+batch_size: 5
+labels_option: 'pass'
+folder: 'pass'
+dataloader: 'train'
+topk: 1

@@ -1,0 +1,9 @@
+defaults:
+  - path: rci
+  - data: imnet
+  - test: knn
+  - train: effb1
+  - _self_
+
+project_name: 'ImageNet'
+debug: 1

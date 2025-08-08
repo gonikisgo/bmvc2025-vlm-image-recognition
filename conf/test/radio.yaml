@@ -1,0 +1,14 @@
+model: 'RADIO-B'
+exp_name: 'radio-hf-1024-val-openclip'
+resolution: 1024
+adaptor: 'clip'
+folder: 'radio-embs' # Folder name to save results
+context: '0'
+labels_option: 'mod'  # Class name strings to tokenize (VIT models only) # mod_v2
+dataloader: 'val'  # 'val' for loading validation data, 'train' for loading train data
+num_workers: 4
+batch_size: 10
+topk: 5
+mode: 'dino'  # Mode flag for saving
+save: True
+emb_space: radio-896
