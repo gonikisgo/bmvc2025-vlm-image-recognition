@@ -92,3 +92,29 @@ def save_predictions_csv(data: pd.DataFrame, directory: str = 'results', filenam
         os.makedirs(parent_dir)
     output_path = os.path.join(parent_dir, f'{filename}.csv')
     data.to_csv(output_path, index=False)
+
+
+def eval_on_clean_labels(df, clean_labels):
+    merged = pd.merge(clean_labels, df, left_on='id', right_on='img_id')
+    merged['top_1_pred'] = merged['top_1_pred'].astype(str)
+
+    merged['correct_new'] = merged.apply(
+        lambda row: row['top_1_pred'].strip() in str(row['proposed_labels']).strip().split(", ")
+        if "," in str(row['proposed_labels'])
+        else row['top_1_pred'].strip() == str(row['proposed_labels']).strip(),
+        axis=1
+    )
+
+    merged['correct_orig'] = merged['top_1_pred'] == merged['original_label_x']
+
+    print("Accuracy on 'clean' labels: ", np.round(merged['correct_new'].mean() * 100, 2))
+    print("Accuracy on original labels, same subset: ", np.round(merged['correct_orig'].mean() * 100, 2))
+
+    return merged
+
+
+def count_parameters_simple(model):
+    """Count parameters using simple PyTorch parameter counting."""
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    return total_params, trainable_params

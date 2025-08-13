@@ -11,11 +11,11 @@ from torch.distributed import all_gather_object
 from torchmetrics import Accuracy
 from pytorch_lightning import seed_everything
 from torch.optim.lr_scheduler import ReduceLROnPlateau
+from class_mapping import ClassDictionary
 
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from in1k_cls_map.cls_loader import ClassDictionary, create_id2idx_map, create_idx2id_map
-from eval.utils import save_predictions_csv
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from utils import save_predictions_csv
 
 DEFAULT_NUM_CLASSES = 1000
 
@@ -62,11 +62,11 @@ class Classifier(pl.LightningModule):
             if self.num_classes != DEFAULT_NUM_CLASSES:
                 self.class_list = [class_dict.get_cls_index(int(i)) for i in cfg.data.cls_list]
                 self.class_names = [class_dict.get_custom_class_name(i) for i in cfg.data.cls_list]
-                self.im_to_orig = create_id2idx_map(cfg.data.cls_list)
+                self.im_to_orig = class_dict.create_id2idx_map(cfg.data.cls_list)
             else:
                 self.class_names = np.load(cfg.path.class_names_path)
 
-            self.cls_name_dict = create_idx2id_map(self.class_names)
+            self.cls_name_dict = class_dict.create_idx2id_map(self.class_names)
 
     def configure_for_testing(self):
         """Testing-specific setup."""
