@@ -1,5 +1,0 @@
-exp_name: '1300_openclip_11nn_train'
-topk: 11
-lower_bound: 1250000  # Number of the image in the folder at which the calculation should start
-upper_bound: 1300000  # Number of the image in the folder at which the calculation should stop
-emb_space: 'openclip'

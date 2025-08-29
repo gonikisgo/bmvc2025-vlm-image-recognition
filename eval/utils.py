@@ -4,6 +4,8 @@ import pandas as pd
 from typing import List, Dict
 from omegaconf import DictConfig
 import numpy as np
+import torch
+
 
 """
 A class to load embeddings for training and validation dataset splits.
@@ -79,16 +81,27 @@ def create_preds_df(data: List[Dict]):
     return df
 
 
-def save_predictions_csv(data: pd.DataFrame, directory: str = 'results', filename: str = 'out'):
+def save_predictions_csv(data: pd.DataFrame, directory: str = 'expts', filename: str = 'out'):
     """
     Saves prediction data from pandas dataframe to a .csv file.
 
     Args:
         data (pd.DataFrame): A dataframe containing prediction data.
         directory (str): The directory to save the CSV file.
-        filename (str): Name of the CSV file to be saved in the 'results' directory.
+        filename (str): Name of the CSV file to be saved in the 'expts' directory.
     """
-    parent_dir = Path(__file__).parent / directory
+    # Handle different directory path formats
+    if directory.startswith('eval/'):
+        # If directory starts with 'eval/', resolve from project root
+        project_root = Path(__file__).parent.parent  # Go up from eval/ to project root
+        parent_dir = project_root / directory
+    elif os.path.isabs(directory):
+        # If absolute path, use as-is
+        parent_dir = Path(directory)
+    else:
+        # Relative path from eval/ directory
+        parent_dir = Path(__file__).parent / directory
+    
     if not parent_dir.exists():
         parent_dir.mkdir(parents=True, exist_ok=True)
     output_path = parent_dir / f'{filename}.csv'
@@ -109,22 +122,24 @@ def eval_on_clean_labels(df, clean_labels):
     merged['correct_orig'] = merged['top_1_pred'] == merged['original_label_x']
 
     print("Accuracy on 'clean' labels: ", np.round(merged['correct_new'].mean() * 100, 2))
-    print("Accuracy on original labels, same subset: ", np.round(merged['correct_orig'].mean() * 100, 2))
-
     return merged
 
 
-def save_accuracy_results_csv(predictions_df: pd.DataFrame, clean_labels_path: str, directory: str = 'results', filename: str = 'out'):
+def save_accuracy_results_csv(predictions_df: pd.DataFrame, clean_labels_path: str, directory: str = 'expts', filename: str = 'out', project_root=None):
     """
     Saves accuracy results to CSV files including validation accuracy and clean validation accuracy.
     
     Args:
         predictions_df (pd.DataFrame): DataFrame containing model predictions
         clean_labels_path (str): Path to the clean validation labels CSV file
-        directory (str): Directory to save the CSV files
+        directory (str): Directory to save the CSV files (relative to eval/ folder)
         filename (str): Base filename for the CSV files
+        project_root: Path to project root. If None, will be inferred from this file's location
     """
     try:
+        if project_root is None:
+            project_root = Path(__file__).parent.parent
+        
         # Load clean validation labels
         clean_labels = pd.read_csv(clean_labels_path)
         
@@ -151,12 +166,10 @@ def save_accuracy_results_csv(predictions_df: pd.DataFrame, clean_labels_path: s
         
         accuracy_df = pd.DataFrame(accuracy_data)
         
-        # Save accuracy results CSV
-        parent_dir = Path(__file__).parent / directory
-        if not parent_dir.exists():
-            parent_dir.mkdir(parents=True, exist_ok=True)
-        
-        accuracy_output_path = parent_dir / f'{filename}_accuracy.csv'
+        # Save accuracy results CSV - always route from project root to eval folder
+        save_dir = project_root / 'eval' / directory
+        save_dir.mkdir(parents=True, exist_ok=True)
+        accuracy_output_path = save_dir / f'{filename}_accuracy.csv'
         accuracy_df.to_csv(accuracy_output_path, index=False)
         print(f'Accuracy results saved to: {accuracy_output_path}')
         
@@ -172,3 +185,65 @@ def count_parameters_simple(model):
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     return total_params, trainable_params
+
+
+def save_embeddings_to_npy(results, model_name, dataloader_name, convert_labels_to_int=True, project_root=None):
+    """
+    Save embeddings results to NPY file. This function can be used by all embedder models
+    to avoid code duplication.
+    
+    Args:
+        results: List of results from model testing, can be nested lists
+        model_name: Name of the model (used for directory and filename)
+        dataloader_name: Name of the dataloader (used for filename)
+        convert_labels_to_int: Whether to convert labels to integers (default: True)
+        project_root: Path to project root. If None, will be inferred from this file's location
+    """
+    if project_root is None:
+        project_root = Path(__file__).parent.parent
+    
+    # Flatten nested results if needed
+    flattened_results = []
+    for sublist in results:
+        if isinstance(sublist, list):
+            flattened_results.extend(sublist)
+        else:
+            flattened_results.append(sublist)
+    
+    labels, image_names, embeddings = [], [], []
+
+    for output in flattened_results:
+        # Handle tensor conversion only if torch is available
+        if torch is not None and torch.is_tensor(output[0]):
+            batch_labels = output[0].cpu().numpy()
+        else:
+            batch_labels = output[0]
+            
+        batch_image_names = output[1]
+        
+        if torch is not None and torch.is_tensor(output[2]):
+            batch_embeddings = output[2].cpu().numpy()
+        else:
+            batch_embeddings = output[2]
+
+        if convert_labels_to_int:
+            labels.extend([int(label) for label in batch_labels])
+        else:
+            labels.extend(batch_labels)
+        image_names.extend(batch_image_names)
+        embeddings.append(batch_embeddings)
+
+    embeddings = np.vstack(embeddings)
+    data = {'label': labels, 'image_name': image_names, 'embedding': embeddings}
+
+    # Print detailed info matching classifier style
+    print(f"Processing embeddings: {len(data['label'])} images, {len(data['image_name'])} filenames, embedding shape: {data['embedding'].shape}")
+
+    # Save to /eval/expts/embeddings/{model_name}/ directory structure
+    save_dir = project_root / 'eval' / 'expts' / 'embeddings' / model_name
+    save_dir.mkdir(parents=True, exist_ok=True)
+    save_path = save_dir / f'{model_name}_{dataloader_name}.npy'
+    np.save(save_path, data)
+    print(f'✓ Embeddings data saved to: {save_path}')
+    
+    return save_path

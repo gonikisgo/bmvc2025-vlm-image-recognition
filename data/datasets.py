@@ -12,7 +12,7 @@ from pytorch_lightning import seed_everything
 Custom dataset classes for loading ImageNet.
 """
 class ImagenetDataset(ImageNet):
-    def __init__(self, root_dir, split='train', transform=None, seed=None):
+    def __init__(self, root_dir, split='val', transform=None, specific_classes=None):
         """
         Args:
             root_dir (str): Path to the dataset root directory.
@@ -21,15 +21,14 @@ class ImagenetDataset(ImageNet):
             seed (int, optional): Random seed for reproducibility.
         """
         super().__init__(root=root_dir, split=split, transform=transform)
-
-        self.seed = seed
-        self.epoch = 0
-        seed_everything(self.seed)
+        if specific_classes:
+            self._filter_specific_classes(specific_classes)
 
         self.image_names = [os.path.basename(path) for path, _ in self.samples]
 
-    def set_epoch(self, epoch):
-        self.epoch = epoch
+
+    def _filter_specific_classes(self, specific_classes):
+        self.samples = [sample for sample in self.samples if sample[1] in specific_classes]
 
     def get_targets(self):
         return [sample[1] for sample in self.samples]
@@ -39,11 +38,6 @@ class ImagenetDataset(ImageNet):
         path, label = self.samples[idx]
         img_id = self.image_names[idx]
         image = Image.open(path).convert('RGB')
-
-        if self.seed is not None:
-            np.random.seed(self.seed + self.epoch + idx)
-            random.seed(int(self.seed + self.epoch + idx))
-            torch.manual_seed(self.seed + self.epoch + idx)
 
         if self.transform:
             image = self.transform(image)

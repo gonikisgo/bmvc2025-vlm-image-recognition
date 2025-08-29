@@ -4,5 +4,6 @@ mode: 'dino'
 batch_size: 5
 labels_option: 'pass'
 folder: 'pass'
-dataloader: 'train'
+num_workers: 4
+dataloader: 'val'
 topk: 1

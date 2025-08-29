@@ -9,6 +9,7 @@ from torch.distributed import all_gather_object
 project_root = Path(__file__).parent.parent.parent
 sys.path.append(str(project_root))
 from eval.models.pl_model import HFTransformersClassifier
+from eval.utils import save_embeddings_to_npy
 
 
 class OpenCLIP(HFTransformersClassifier):
@@ -76,32 +77,18 @@ class OpenClipEmbedder(HFTransformersClassifier):
         return labels, image_names, embs
 
     def on_test_end(self):
-        world_size = torch.distributed.get_world_size()
-        is_distributed = world_size > 1
-
+        is_distributed = torch.distributed.is_initialized() and torch.distributed.get_world_size() > 1
         gathered_results = [self.test_results]
+
         if is_distributed:
-            gathered_results = [None for _ in range(world_size)]
+            gathered_results = [None for _ in range(torch.distributed.get_world_size())]
             all_gather_object(gathered_results, self.test_results)
 
         if self.trainer.global_rank == 0:
-            self.__save_to_npy(gathered_results)
-
-    def __save_to_npy(self, results):
-        flattened_results = [item for sublist in results for item in sublist]
-        labels, image_names, embeddings = [], [], []
-
-        for output in flattened_results:
-            batch_labels = output[0].cpu().numpy() if torch.is_tensor(output[0]) else output[0]
-            batch_image_names = output[1]
-            batch_embeddings = output[2].cpu().numpy() if torch.is_tensor(output[2]) else output[2]
-
-            labels.extend(batch_labels)
-            image_names.extend(batch_image_names)
-            embeddings.append(batch_embeddings)
-
-        embeddings = np.vstack(embeddings)
-        data = {'label': labels, 'image_name': image_names, 'embedding': embeddings}
-
-        np.save(f'{self.exp_name}.npy', data)
-        print(f'Data saved to NPY {self.exp_name}.npy file.')
+            save_embeddings_to_npy(
+                results=gathered_results,
+                model_name=self.model_name,
+                dataloader_name=self.cfg.test.dataloader,
+                convert_labels_to_int=False,  # OpenCLIP doesn't convert labels to int
+                project_root=project_root
+            )

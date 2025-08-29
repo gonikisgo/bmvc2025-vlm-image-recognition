@@ -19,8 +19,6 @@ A K-Nearest Neighbors (KNN) embedding classifier using cosine similarity.
 
 class KNNClassifier:
     def __init__(self, cfg):
-        self.mode = cfg.test.mode
-
         if self.mode == 'few-shot':
             self.k = min(cfg.test.topk, cfg.test.m_sample)
         else:

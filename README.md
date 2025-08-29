@@ -15,31 +15,71 @@ This repository contains the code for our BMVC 2025 paper on vision-language mod
 - Modes:
   - `classifier` (default), `embedder` (for VLMs and `DINOv2`), `all_templates` (SigLIP2 and OpenCLIP only), `count_params`
 - Templates (classifier mode of VLM models only):
-  - `0-7`, `avg`, `avg'`
+  - `0-7`, `avg`, `avg_prime`
 - Labels options (VLMs only):
   - `wordnet`, `openai`, `mod`
+- Dataloader options (embedder mode only):
+  - `train`, `val` (default)
 
 ### Examples
 
-- Run CLIP classifier with template 0 and WordNet labels:
-  - `python exp_launcher.py CLIP classifier 0 wordnet`
-- Run SigLIP embedder:
-  - `python exp_launcher.py SigLIP embedder`
-- Run SigLIP classifier with avg template and OpenAI labels:
-  - `python exp_launcher.py SigLIP classifier avg openai`
-- Run SigLIP2 in all-templates mode with modified labels and trigger CSV post-processing:
-  - `python exp_launcher.py SigLIP2 all_templates mod`
-- Run OpenCLIP in all-templates mode with WordNet labels:
-  - `python exp_launcher.py OpenCLIP all_templates wordnet`
-- Run EfficientNet-L2 classifier:
-  - `python exp_launcher.py EfficientNet-L2`
-- Run DINOv2 (embedder mode is enforced):
-  - `python exp_launcher.py DINOv2`
-- Run RADIO classifier or embedder:
-  - `python exp_launcher.py RADIO classifier`
-  - `python exp_launcher.py RADIO embedder`
-- Count parameters of the supported models:
-  - `python exp_launcher.py count_params`
+**VLM Classification:**
+```bash
+# Run CLIP classifier with template 0 and WordNet labels
+python exp_launcher.py CLIP classifier 0 wordnet
+
+# Run SigLIP classifier with avg template and OpenAI labels
+python exp_launcher.py SigLIP classifier avg openai
+
+# Run SigLIP classifier with avg_prime template and modified labels
+python exp_launcher.py SigLIP classifier avg_prime mod
+```
+
+**VLM Embedder Mode:**
+```bash
+# Run SigLIP embedder (defaults to 'val' dataloader)
+python exp_launcher.py SigLIP embedder
+
+# Run SigLIP embedder with train dataloader
+python exp_launcher.py SigLIP embedder train
+
+# Run DINOv2 (embedder mode is enforced, defaults to 'val' dataloader)
+python exp_launcher.py DINOv2
+
+# Run DINOv2 embedder with train dataloader
+python exp_launcher.py DINOv2 embedder train
+```
+
+**All Templates Mode:**
+```bash
+# Run SigLIP2 in all-templates mode with modified labels and trigger CSV post-processing
+python exp_launcher.py SigLIP2 all_templates mod
+
+# Run OpenCLIP in all-templates mode with WordNet labels
+python exp_launcher.py OpenCLIP all_templates wordnet
+```
+
+**EfficientNet Classification:**
+```bash
+# Run EfficientNet-L2 classifier
+python exp_launcher.py EfficientNet-L2
+```
+
+**RADIO Model:**
+```bash
+# Run RADIO classifier or embedder
+python exp_launcher.py RADIO classifier
+python exp_launcher.py RADIO embedder
+python exp_launcher.py RADIO embedder train
+```
+
+**Parameter Counting:**
+```bash
+# Count parameters of VLM models
+python exp_launcher.py CLIP count_params
+python exp_launcher.py SigLIP2 count_params
+python exp_launcher.py RADIO count_params
+```
 
 ## "Cleaner Validation" labels
 
@@ -50,7 +90,6 @@ The "Cleaner Validation" set is external work (not ours). We use their released 
 
 ## Model parameter counting
 
-Model parameter counts are computed via simple PyTorch parameter summation in `eval/utils.py`:
 
 ## Two-Phase Experiment (Work in Progress)
 

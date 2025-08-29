@@ -9,7 +9,7 @@ import hydra
 from omegaconf import DictConfig
 from pytorch_lightning import Trainer
 
-project_root = Path(__file__).parent.parent.parent.parent
+project_root = Path(__file__).parent.parent.parent
 sys.path.append(str(project_root))
 from eval.models.openclip import OpenCLIP, OpenClipEmbedder
 from eval.models.clip import CLIP, ClipEmbedder
@@ -22,15 +22,13 @@ from data.datamodules import ImageNetDataModule
 Script for testing classifier and embedder models using PyTorch Lightning and Hydra.
 Supports both classification and embedding modes.
 """
-@hydra.main(version_base=None, config_path='../../../conf', config_name='base')
+@hydra.main(version_base=None, config_path='../../conf', config_name='base')
 def main(cfg: DictConfig) -> None:
     start_time = time.time()
 
     trainer = Trainer()
-    
-    # Get mode from config (default to classifier if not specified)
-    mode = getattr(cfg, 'mode', 'classifier')
-    model_name = cfg.model
+    model_name = cfg.test.model
+    mode = cfg.test.mode  # 'classifier' or 'embedder'
     
     # Dynamically select model based on configuration and mode
     if mode == 'embedder':

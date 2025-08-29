@@ -1,7 +1,6 @@
 defaults:
   - path: cmp
-  - test: knn
-  - train: effb1
+  - test: openclip
   - _self_
 
 project_name: 'ImageNet'

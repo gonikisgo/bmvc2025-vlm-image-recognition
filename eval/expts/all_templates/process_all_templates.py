@@ -10,8 +10,7 @@ def majority_vote(labels: List[str]) -> str:
     return Counter(labels).most_common(1)[0][0]
 
 def compute_knn_predictions(df: pd.DataFrame, k_values: List[int]) -> pd.DataFrame:
-    # For all_templates mode, models save top-11 predictions
-    top_label_cols = [f'top_{i}_pred' for i in range(1, 12)]  # Changed from 52 to 11
+    top_label_cols = [f'top_{i}_pred' for i in range(1, 12)]
 
     missing_cols = [col for col in top_label_cols if col not in df.columns]
     if missing_cols:

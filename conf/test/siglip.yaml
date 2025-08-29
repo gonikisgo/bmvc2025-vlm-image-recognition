@@ -5,7 +5,7 @@ labels_option: 'mod'  # Class name strings to tokenize (VIT models only)
 context: '0'
 dataloader: 'val'  # 'val' for loading validation data, 'train' for loading train data
 num_workers: 8
-batch_size: 5
+batch_size: 25
 topk: 5
 mode: 'base'  # Mode flag for saving
 save: True

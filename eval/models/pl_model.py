@@ -1,4 +1,3 @@
-import os
 import sys
 import numpy as np
 import pandas as pd
@@ -9,7 +8,6 @@ import pytorch_lightning as pl
 from timm import create_model
 from torch.distributed import all_gather_object
 from torchmetrics import Accuracy
-from pytorch_lightning import seed_everything
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from class_mapping import ClassDictionary
 from pathlib import Path
@@ -38,11 +36,8 @@ class Classifier(pl.LightningModule):
         self.labels_to_save_df = None
         self.test_results = []
 
-        # For all_templates, ensure we save top-11 predictions
-        if self.cfg.test.context == 'all_templates':
-            self.topk = max(11, self.cfg.test.topk)
-        else:
-            self.topk = self.cfg.test.topk
+        # Use the configured topk value from config
+        self.topk = self.cfg.test.topk
         self.exp_name = None
         self.lr = None
         self.lr_scheduler = None
@@ -64,9 +59,8 @@ class Classifier(pl.LightningModule):
         self.configure_for_testing()
 
         if cfg.test.mode != 'dino':
-            class_dict = ClassDictionary()
-            self.class_names = np.load(cfg.path.class_names_path)
-            self.cls_name_dict = class_dict.create_idx2id_map(self.class_names)
+            labels_path = Path(__file__).parent.parent.parent / 'data' / 'cls_names' / f'cls_name_mod.npy'
+            self.class_names = np.load(labels_path)
 
     def configure_for_testing(self):
         """Testing-specific setup."""
@@ -135,24 +129,26 @@ class Classifier(pl.LightningModule):
 
         self.log('val/loss', loss_mean, on_step=False, on_epoch=True, logger=True)
         self.log('val/acc', acc, on_step=False, on_epoch=True, logger=True)
-        for i in range(self.num_classes):
-            self.log(f'val/{self.cls_name_dict[i]}_loss', class_losses[i], on_step=False, on_epoch=True, logger=True)
-            self.log(f'val/{self.cls_name_dict[i]}_acc', class_accuracies[i], on_step=False, on_epoch=True, logger=True)
-
-    def on_train_epoch_start(self):
-        """
-        Set the epoch for the dataset to ensure that the same augmentations are applied to the same images.
-        """
-        if self.is_using_k_folds:
-            self.trainer.train_dataloader.dataset.dataset.set_epoch(self.current_epoch)
-        else:
-            self.trainer.train_dataloader.dataset.set_epoch(self.current_epoch)
 
     def test_step(self, batch, batch_idx):
         image_names, x, y = batch
         x = x.to(self.device)
         y = y.to(self.device)
+        
+        # Debug: Check if images are different
+        if batch_idx == 0:  # Print only for first batch
+            print(f"Batch {batch_idx}: Processing {len(image_names)} images")
+            print(f"Images shape: {x.shape}")
+            print(f"First image name: {image_names[0]}")
+            print(f"Image tensor stats - min: {x[0].min():.4f}, max: {x[0].max():.4f}, mean: {x[0].mean():.4f}")
+        
         preds, probs = self.predict_step(x, y)
+        
+        # Debug: Check predictions
+        if batch_idx == 0:
+            print(f"Predictions shape: {preds.shape}, Probs shape: {probs.shape}")
+            print(f"First prediction: {preds[0][:3]}")  # Show first 3 predictions
+            print(f"First probabilities: {probs[0][:3]}")  # Show first 3 probabilities
 
         loss = torch.tensor([0.])
         preds_ = preds[:, 0]
@@ -192,13 +188,21 @@ class Classifier(pl.LightningModule):
                 labels, image_names = output['original_labels'], output['image_names']
                 preds, probs = output['preds'], output['probs']
 
+                # Move tensors to CPU if they're on GPU
+                if hasattr(preds, 'device'):
+                    preds = preds.cpu()
+                if hasattr(probs, 'device'):
+                    probs = probs.cpu()
+                if hasattr(labels, 'device'):
+                    labels = labels.cpu()
+
                 for i in range(len(labels)):
                     row = {
                         'original_label': labels[i].item(),
                         'img_id': image_names[i]
                     }
-                    # For all_templates, save top-11 predictions, otherwise use configured topk
-                    save_topk = 11 if self.context == 'all_templates' else self.topk
+                    # Use the configured topk value for all modes
+                    save_topk = self.topk
                     for j in range(save_topk):
                         if self.num_classes != DEFAULT_NUM_CLASSES:
                             row[f'top_{j + 1}_pred'] = list(self.im_to_orig.keys())[list(self.im_to_orig.values()).index(preds[i][j].item())]
@@ -208,20 +212,56 @@ class Classifier(pl.LightningModule):
 
                     data.append(row)
 
-            # Save predictions CSV
-            save_predictions_csv(pd.DataFrame(data), directory=f'run/{self.save_folder}/', filename=self.exp_name)
+            # Save predictions CSV and accuracy results CSV with appropriate structure
+            model_name = getattr(self, 'model_name', self.cfg.test.model)
             
-            # Save accuracy results CSV
-            try:
-                clean_labels_path = self.cfg.path.cleaner_validation
-                save_accuracy_results_csv(
-                    predictions_df=pd.DataFrame(data),
-                    clean_labels_path=clean_labels_path,
-                    directory=f'run/{self.save_folder}/',
-                    filename=self.exp_name
-                )
-            except Exception as e:
-                print(f"Warning: Could not save accuracy results: {e}")
+            # Check if model is EfficientNet or in classifier mode - both should use structured saving
+            is_efficientnet = 'efficientnet' in model_name.lower()
+            is_classifier_mode = self.mode == 'classifier'
+            
+            if is_classifier_mode or is_efficientnet:
+                # Determine save directory and filename format
+                if is_efficientnet:
+                    save_directory = f"eval/expts/supervised_models/{model_name}/"
+                    directory_type = "supervised models"
+                    filename = model_name  # Use model name as filename for EfficientNet
+                else:
+                    # Create VLM-style filename: model_mode_context_labels
+                    context = getattr(self, 'context', self.cfg.test.get('context', '0'))
+                    labels_option = getattr(self, 'labels_option', self.cfg.test.get('labels_option', 'mod'))
+                    filename = f"{model_name}_{self.mode}_{context}_{labels_option}"
+                    save_directory = f"eval/expts/vlm/{model_name}/"
+                    directory_type = "VLM"
+                
+                # Save to appropriate structure
+                save_predictions_csv(pd.DataFrame(data), directory=save_directory, filename=filename)
+                
+                try:
+                    clean_labels_path = self.cfg.path.cleaner_validation
+                    save_accuracy_results_csv(
+                        predictions_df=pd.DataFrame(data),
+                        clean_labels_path=clean_labels_path,
+                        directory=save_directory,
+                        filename=filename
+                    )
+                except Exception as e:
+                    print(f"Warning: Could not save accuracy results to {directory_type} directory: {e}")
+                
+                print(f"Results saved to {directory_type} structure: {save_directory}{filename}")
+            else:
+                # For embedder mode, save to original location
+                save_predictions_csv(pd.DataFrame(data), directory=f'eval/run/{self.save_folder}/', filename=self.exp_name)
+                
+                try:
+                    clean_labels_path = self.cfg.path.cleaner_validation
+                    save_accuracy_results_csv(
+                        predictions_df=pd.DataFrame(data),
+                        clean_labels_path=clean_labels_path,
+                        directory=f'eval/run/{self.save_folder}/',
+                        filename=self.exp_name
+                    )
+                except Exception as e:
+                    print(f"Warning: Could not save accuracy results: {e}")
 
 
 class TimmClassifier(Classifier):
@@ -233,13 +273,24 @@ class TimmClassifier(Classifier):
         'efficientnet_v2': 'hf_hub:timm/tf_efficientnetv2_xl.in21k_ft_in1k'
     }
 
-    def __init__(self, cfg, is_training=False, reset_last_layer=True):
+    def __init__(self, cfg, is_training=False):
         super().__init__(cfg, is_training=is_training)
-        self.model_name = cfg.train.model if is_training else cfg.test.model
-        self.model = create_model(self.model2timm[self.model_name], pretrained=bool(cfg.train.pretrained),
-                                  num_classes=self.num_classes)
-        if is_training and reset_last_layer:
-            self.model.classifier = nn.Linear(self.model.classifier.in_features, self.num_classes)
+        self.model_name = cfg.test.model
+        
+        # Create model with pretrained weights
+        print(f"Loading model: {self.model_name}")
+        print(f"Model path: {self.model2timm[self.model_name]}")
+        
+        self.model = create_model(
+            self.model2timm[self.model_name], 
+            num_classes=self.num_classes,
+            pretrained=True  # Ensure pretrained weights are loaded
+        )
+        
+        print(f"Model loaded successfully. Number of parameters: {sum(p.numel() for p in self.model.parameters()):,}")
+        
+        # Ensure model is in eval mode for testing
+        self.model.eval()
 
     def get_image_transform(self, is_training=False):
         """
@@ -255,10 +306,37 @@ class TimmClassifier(Classifier):
         self.model = self.model.eval()
 
     def predict_step(self, images, labels):
-        with torch.no_grad(), torch.amp.autocast(self.device.type):
-            outputs = self.model(images).softmax(dim=1)
-            probs, preds = torch.topk(outputs, k=self.topk, dim=-1)
-        torch.cuda.empty_cache()
+        # Ensure images are on the correct device
+        images = images.to(self.device)
+        
+        with torch.no_grad():
+            # Use autocast only if device supports it (CUDA/MPS)
+            if self.device.type in ['cuda', 'mps']:
+                with torch.amp.autocast(self.device.type):
+                    outputs = self.model(images)
+            else:
+                outputs = self.model(images)
+            
+            # Apply softmax to get probabilities
+            probs_full = outputs.softmax(dim=1)
+            
+            # Debug: Check if outputs are reasonable
+            if torch.isnan(outputs).any():
+                print("WARNING: NaN values detected in model outputs!")
+            if torch.isinf(outputs).any():
+                print("WARNING: Inf values detected in model outputs!")
+            
+            # Get top-k predictions and their probabilities
+            probs, preds = torch.topk(probs_full, k=self.topk, dim=-1)
+            
+            # Debug: Check if probs and preds have reasonable values
+            if probs.max() == 0 or probs.min() < 0:
+                print(f"WARNING: Unusual probability values - min: {probs.min():.6f}, max: {probs.max():.6f}")
+        
+        # Clean up GPU memory if using CUDA
+        if self.device.type == 'cuda':
+            torch.cuda.empty_cache()
+            
         return preds, probs
 
 
@@ -271,9 +349,9 @@ class HFTransformersClassifier(Classifier):
         'CLIP': 'openai/clip-vit-large-patch14-336',
         'DINOv2': 'facebook/dinov2-giant',
         'SigLIP': 'google/siglip-so400m-patch14-384',
-        'SigLIPv2_timm': 'hf-hub:timm/ViT-SO400M-14-SigLIP2-378',
-        'SigLIP_v2_g_timm': 'hf-hub:timm/ViT-gopt-16-SigLIP2-384',
-        'RADIO-G': 'nvidia/C-RADIOv2-G'
+        'SigLIP2_so': 'hf-hub:timm/ViT-SO400M-14-SigLIP2-378',
+        'SigLIP2': 'hf-hub:timm/ViT-gopt-16-SigLIP2-384',
+        'RADIO': 'nvidia/C-RADIOv2-G'
     }
 
     context_template_0 = [lambda c: f"{c}"]
@@ -310,10 +388,9 @@ class HFTransformersClassifier(Classifier):
         super().__init__(cfg)
         self.model_name = cfg.test.model
         self.labels_option = cfg.test.labels_option
-        self.context = cfg.test.context
-        
-        # Validate and set up templates
-        self._setup_templates()
+        if self.cfg.test.model != 'DINOv2' and self.cfg.test.model != 'RADIO':
+            self.context = cfg.test.context
+            self._setup_templates()
         
         self.tokenizer = None
         self.tokenized_labels = None
@@ -367,7 +444,7 @@ class HFTransformersClassifier(Classifier):
                 'description': 'Average of 7 templates (excluding base)',
                 'count': 7
             },
-            'avg\'': {
+            'avg_prime': {
                 'templates': self.avg_prime,
                 'description': 'Average of 8 templates (including base)',
                 'count': 8

@@ -9,6 +9,7 @@ from open_clip import create_model_from_pretrained, get_tokenizer
 project_root = Path(__file__).parent.parent.parent
 sys.path.append(str(project_root))
 from eval.models.pl_model import HFTransformersClassifier
+from eval.utils import save_embeddings_to_npy
 
 
 class SigLIP2(HFTransformersClassifier):
@@ -24,9 +25,7 @@ class SigLIP2(HFTransformersClassifier):
 
     def __generate_tokenized_labels(self):
         n_promts = len(self.openai_templates)
-        print(f"Generating tokenized labels for {n_promts} promts")
         label_variations = self._generate_label_variations()
-        print(f"Label variations: {label_variations[:5]}")
 
         if self.context == 'all_templates':
             # For all_templates, each class is tokenized separately (8000 total)
@@ -113,23 +112,10 @@ class SigLip2Embedder(HFTransformersClassifier):
 
     def on_test_end(self):
         gathered_results = [self.test_results]
-        self.__save_to_npy(gathered_results)
-
-    def __save_to_npy(self, results):
-        flattened_results = [item for sublist in results for item in sublist]
-        labels, image_names, embeddings = [], [], []
-
-        for output in flattened_results:
-            batch_labels = output[0].cpu().numpy() if torch.is_tensor(output[0]) else output[0]
-            batch_image_names = output[1]
-            batch_embeddings = output[2].cpu().numpy() if torch.is_tensor(output[2]) else output[2]
-
-            labels.extend([int(label) for label in batch_labels])
-            image_names.extend(batch_image_names)
-            embeddings.append(batch_embeddings)
-
-        embeddings = np.vstack(embeddings)
-        data = {'label': labels, 'image_name': image_names, 'embedding': embeddings}
-
-        np.save(f'{self.exp_name}.npy', data)
-        print(f'Data saved to NPY {self.exp_name}.npy file.')
+        save_embeddings_to_npy(
+            results=gathered_results,
+            model_name=self.model_name,
+            dataloader_name=self.cfg.test.dataloader,
+            convert_labels_to_int=True,
+            project_root=project_root
+        )

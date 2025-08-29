@@ -1,5 +1,4 @@
 import copy
-import os
 import sys
 from pathlib import Path
 
@@ -9,17 +8,17 @@ from tqdm import tqdm
 from torch.nn import functional as F
 from transformers import CLIPImageProcessor
 
-project_root = Path(__file__).parent
+project_root = Path(__file__).parent.parent.parent
 sys.path.append(str(project_root))
 
 
 class RADIOTorchEmbedder:
     model2torch = {
-        'RADIO-G': 'radio_v2.5-g'
+        'RADIO': 'radio_v2.5-g'
     }
 
     model2transformers = {
-        'RADIO-G': 'nvidia/C-RADIOv2-G'
+        'RADIO': 'nvidia/C-RADIOv2-G'
     }
 
     def __init__(self, cfg):
@@ -70,13 +69,15 @@ class RADIOTorchEmbedder:
 
         data = {'label': labels, 'image_name': image_names, 'embedding': embeddings}
 
-        print(len(data['label']), len(data['image_name']), data['embedding'].shape)
-        save_dir = os.path.join(self.cfg.test.folder, self.cfg.test.model)
-        os.makedirs(save_dir, exist_ok=True)
+        # Print detailed info matching classifier style
+        print(f"Processing embeddings: {len(data['label'])} images, {len(data['image_name'])} filenames, embedding shape: {data['embedding'].shape}")
+        # Save to /eval/expts/embeddings/{model_name}/ directory structure
+        save_dir = project_root / 'eval' / 'expts' / 'embeddings' / self.cfg.test.model
+        save_dir.mkdir(parents=True, exist_ok=True)
 
-        save_path = os.path.join(save_dir, f'{self.cfg.test.exp_name}.npy')
+        save_path = save_dir / f'{self.cfg.test.model}_{self.cfg.test.dataloader}.npy'
         np.save(save_path, data)
-        print(f'Data saved to NPY {save_path} file.')
+        print(f'✓ Embeddings data saved to: {save_path}')
 
     def run_test(self, dataloader):
         results = []

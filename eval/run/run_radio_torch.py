@@ -1,16 +1,19 @@
 import sys
 from pathlib import Path
+import time
 
 import numpy as np
 import torch
+import hydra
+from omegaconf import DictConfig
 
-project_root = Path(__file__).parent.parent.parent.parent
+project_root = Path(__file__).parent.parent.parent
 sys.path.append(str(project_root))
 from eval.models.radio_embedder_torch import RADIOTorchEmbedder
 from data.datamodules import ImageNetDataModule
 
 
-@hydra.main(version_base=None, config_path='../../../conf', config_name='base')
+@hydra.main(version_base=None, config_path='../../conf', config_name='base')
 def main(cfg: DictConfig) -> None:
     start_time = time.time()
 

@@ -6,7 +6,7 @@ import torch
 from torch.utils.data import DataLoader
 from torchvision import transforms
 
-project_root = Path(__file__).parent.parent.parent.parent
+project_root = Path(__file__).parent.parent.parent
 sys.path.append(str(project_root))
 
 from pytorch_lightning import Trainer
@@ -20,16 +20,12 @@ from data.datamodules import ImageNetDataModule
 """
 Script for testing classifier models using PyTorch Lightning and Hydra.
 """
-@hydra.main(version_base=None, config_path='../../../conf', config_name='base')
+@hydra.main(version_base=None, config_path='../../conf', config_name='base')
 def main(cfg: DictConfig) -> None:
     start_time = time.time()
 
     trainer = Trainer()
-    if cfg.test.checkpoint_name != 'none':
-        checkpoint_path = f'../../checkpoints/best_overall/{cfg.test.checkpoint_name}'
-        model = TimmClassifier.load_from_checkpoint(checkpoint_path, cfg=cfg)
-    else:
-        model = TimmClassifier(cfg=cfg)
+    model = TimmClassifier(cfg=cfg)
 
     val_transform = model.get_image_transform(is_training=False)
     imagenet_data = ImageNetDataModule(

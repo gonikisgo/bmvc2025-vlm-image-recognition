@@ -1,11 +1,11 @@
-model: 'SigLIP_v2_g_timm'
+model: 'SigLIP2'
 exp_name: 'mult'
 folder: 'openclip' # Folder name to save results
 labels_option: 'mod'  # Class name strings to tokenize (VIT models only) # mod
-context: 'mean8'
+context: 'avg'
 dataloader: 'val'  # 'val' for loading validation data, 'train' for loading train data
 num_workers: 8
-batch_size: 10
+batch_size: 25
 topk: 5
 mode: 'base'  # Mode flag for saving
 save: True
