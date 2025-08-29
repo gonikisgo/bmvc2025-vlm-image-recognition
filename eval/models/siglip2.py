@@ -1,12 +1,13 @@
 import sys
-import os
+from pathlib import Path
 
 import numpy as np
 import torch
 from torch.distributed import all_gather_object
 from open_clip import create_model_from_pretrained, get_tokenizer
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+project_root = Path(__file__).parent.parent.parent
+sys.path.append(str(project_root))
 from eval.models.pl_model import HFTransformersClassifier
 
 
@@ -27,21 +28,42 @@ class SigLIP2(HFTransformersClassifier):
         label_variations = self._generate_label_variations()
         print(f"Label variations: {label_variations[:5]}")
 
-        tokenized_labels = [
-            self.tokenizer(label_variations[i * n_promts:(i + 1) * n_promts], context_length=self.model.context_length).to('cuda')
-            for i in range(1000)
-        ]
+        if self.context == 'all_templates':
+            # For all_templates, each class is tokenized separately (8000 total)
+            tokenized_labels = [
+                self.tokenizer([label_variations[i]], context_length=self.model.context_length).to('cuda')
+                for i in range(len(label_variations))
+            ]
+        else:
+            # Original behavior: each class gets all templates
+            tokenized_labels = [
+                self.tokenizer(label_variations[i * n_promts:(i + 1) * n_promts], context_length=self.model.context_length).to('cuda')
+                for i in range(1000)
+            ]
         return tokenized_labels
 
     def _generate_text_embeddings(self):
         text_embeddings = []
         with (torch.no_grad(), torch.amp.autocast('cuda')):
-            for text_variation in self.tokenized_labels:
-                text_features = self.model.encode_text(text_variation, normalize=True)
-                text_features = text_features.mean(dim=0)
-                text_features /= text_features.norm()
-                text_embeddings.append(text_features)
-        return torch.stack(text_embeddings)
+            if self.context == 'all_templates':
+                # For all_templates, each class gets one template
+                for text_variation in self.tokenized_labels:
+                    text_features = self.model.encode_text(text_variation, normalize=True)
+                    # Each text_variation is already a single template, so no averaging needed
+                    text_features = text_features.squeeze(0)  # Remove batch dimension
+                    text_features = text_features / text_features.norm()
+                    text_embeddings.append(text_features)
+                embeddings_tensor = torch.stack(text_embeddings)
+            else:
+                # Original behavior: average templates
+                for text_variation in self.tokenized_labels:
+                    text_features = self.model.encode_text(text_variation, normalize=True)
+                    text_features = text_features.mean(dim=0)
+                    text_features /= text_features.norm()
+                    text_embeddings.append(text_features)
+                embeddings_tensor = torch.stack(text_embeddings)
+            
+        return embeddings_tensor
 
     def image_transform_f(self, images):
         return self.preprocess(images)
@@ -61,10 +83,9 @@ class SigLIP2(HFTransformersClassifier):
             text_probs = torch.sigmoid(logits)
 
             probs, preds = torch.topk(text_probs, k=self.topk, dim=-1)
-            suppl = self.create_label_confidence(labels, text_probs)
 
         torch.cuda.empty_cache()
-        return preds, probs, suppl
+        return preds, probs
 
 
 class SigLip2Embedder(HFTransformersClassifier):

@@ -1,6 +1,7 @@
 import copy
 import os
 import sys
+from pathlib import Path
 
 import torch
 import numpy as np
@@ -8,7 +9,8 @@ from tqdm import tqdm
 from torch.nn import functional as F
 from transformers import CLIPImageProcessor
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__))))
+project_root = Path(__file__).parent
+sys.path.append(str(project_root))
 
 
 class RADIOTorchEmbedder:

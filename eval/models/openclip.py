@@ -1,12 +1,13 @@
 import sys
-import os
+from pathlib import Path
 
 import numpy as np
 import torch
 from open_clip import create_model_and_transforms, get_tokenizer
 from torch.distributed import all_gather_object
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+project_root = Path(__file__).parent.parent.parent
+sys.path.append(str(project_root))
 from eval.models.pl_model import HFTransformersClassifier
 
 
@@ -24,14 +25,26 @@ class OpenCLIP(HFTransformersClassifier):
         text_embeddings = []
         with torch.no_grad(), torch.amp.autocast('cuda'):
             print(f"Generating tokenized labels for {len(self.openai_templates)} promts")
-            for i in range(0, len(self.tokenized_labels), len(self.openai_templates)):
-                text_variation = self.tokenized_labels[i:i + len(self.openai_templates)]
-
-                text_features = self.model.encode_text(text_variation, normalize=True).to('cuda')
-                text_features = text_features.mean(dim=0)
-                text_features /= text_features.norm()
-                text_embeddings.append(text_features)
-        embeddings_tensor = torch.stack(text_embeddings)
+            
+            if self.context == 'all_templates':
+                # For all_templates, each class is tokenized separately (8000 total)
+                for i in range(len(self.tokenized_labels)):
+                    text_variation = self.tokenized_labels[i:i+1]  # Single class
+                    text_features = self.model.encode_text(text_variation, normalize=True).to('cuda')
+                    text_features = text_features.squeeze(0)  # Remove batch dimension
+                    text_features = text_features / text_features.norm()
+                    text_embeddings.append(text_features)
+                embeddings_tensor = torch.stack(text_embeddings)
+            else:
+                # Original behavior: average templates
+                for i in range(0, len(self.tokenized_labels), len(self.openai_templates)):
+                    text_variation = self.tokenized_labels[i:i + len(self.openai_templates)]
+                    text_features = self.model.encode_text(text_variation, normalize=True).to('cuda')
+                    text_features = text_features.mean(dim=0)
+                    text_features /= text_features.norm()
+                    text_embeddings.append(text_features)
+                embeddings_tensor = torch.stack(text_embeddings)
+            
         return embeddings_tensor
 
     def on_test_start(self):
@@ -43,9 +56,8 @@ class OpenCLIP(HFTransformersClassifier):
             image_features = image_features / image_features.norm(dim=-1, keepdim=True)
             text_probs = (100.0 * image_features @ self.text_embeddings.T).softmax(dim=-1)
             probs, preds = torch.topk(text_probs, k=self.topk, dim=-1)
-            suppl = self.create_label_confidence(labels, text_probs)
         torch.cuda.empty_cache()
-        return preds, probs, suppl
+        return preds, probs
 
 
 class OpenClipEmbedder(HFTransformersClassifier):

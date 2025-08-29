@@ -6,7 +6,8 @@ import numpy as np
 import torch
 from transformers import AutoConfig, AutoModel, CLIPImageProcessor
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+project_root = Path(__file__).parent.parent.parent
+sys.path.append(str(project_root))
 from eval.models.pl_model import HFTransformersClassifier
 
 

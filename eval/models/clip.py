@@ -1,11 +1,12 @@
 import sys
-import os
+from pathlib import Path
 
 import numpy as np
 import torch
 from transformers import CLIPProcessor, CLIPModel
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
+project_root = Path(__file__).parent.parent.parent
+sys.path.append(str(project_root))
 from eval.models.pl_model import HFTransformersClassifier
 
 
@@ -55,9 +56,8 @@ class CLIP(HFTransformersClassifier):
             image_features = image_features / image_features.norm(dim=-1, keepdim=True)
             text_probs = (100.0 * image_features @ self.text_embeddings.T).softmax(dim=-1)
             probs, preds = torch.topk(text_probs, k=self.topk, dim=-1)
-            suppl = self.create_label_confidence(labels, text_probs)
         torch.cuda.empty_cache()
-        return preds, probs, suppl
+        return preds, probs
 
 
 class ClipEmbedder(HFTransformersClassifier):

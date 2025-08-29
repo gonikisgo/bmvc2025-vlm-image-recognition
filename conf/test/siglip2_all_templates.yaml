@@ -1,0 +1,12 @@
+model: 'SigLIP_v2_g_timm'
+exp_name: 'siglip2_all_templates'
+folder: 'siglip2' # Folder name to save results
+labels_option: 'mod'  # Class name strings to tokenize (VIT models only) # mod
+context: 'all_templates'
+dataloader: 'val'  # 'val' for loading validation data, 'train' for loading train data
+num_workers: 8
+batch_size: 10
+topk: 11
+mode: 'base'  # Mode flag for saving
+save: True
+emb_space: siglipv2-g

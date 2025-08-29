@@ -1,17 +1,16 @@
-import os
 import sys
-import time
-from copy import copy
+from pathlib import Path
 
 import numpy as np
-from sklearn.neighbors import NearestNeighbors
-from sklearn.model_selection import StratifiedKFold
-import hydra
-from omegaconf import DictConfig
-from collections import Counter
+import torch
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import accuracy_score
+import pickle
+import os
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from eval.utils import create_preds_df, save_predictions_csv, EmbsLoader
+project_root = Path(__file__).parent.parent.parent
+sys.path.append(str(project_root))
+from eval.utils import create_preds_df, save_predictions_csv, save_accuracy_results_csv, EmbsLoader
 
 """
 A K-Nearest Neighbors (KNN) embedding classifier using cosine similarity.
@@ -220,8 +219,22 @@ class KNNClassifier:
                 path = os.path.join('knn_train', 'default')
                 filename = self.exp_name
 
+            # Save predictions CSV
             save_predictions_csv(create_preds_df(self.results), directory=path, filename=filename)
             print(f'Results saved in knn_train/{filename}.csv')
+            
+            # Save accuracy results CSV
+            try:
+                clean_labels_path = self.cfg.path.cleaner_validation
+                save_accuracy_results_csv(
+                    predictions_df=create_preds_df(self.results),
+                    clean_labels_path=clean_labels_path,
+                    directory=path,
+                    filename=filename
+                )
+                print(f'Accuracy results saved in knn_train/{filename}_accuracy.csv')
+            except Exception as e:
+                print(f"Warning: Could not save accuracy results: {e}")
         else:
             print('No results to save')
 
@@ -283,7 +296,7 @@ class KNNClassifier:
 
 
 @hydra.main(version_base=None, config_path='../../conf', config_name='base')
-def main(cfg: DictConfig) -> None:
+def main(cfg):
     start_time = time.time()
     knn = KNNClassifier(cfg)
     knn.run()

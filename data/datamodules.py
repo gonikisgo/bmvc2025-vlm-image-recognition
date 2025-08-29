@@ -1,22 +1,23 @@
-import os
 import sys
+from pathlib import Path
 
-from torch.utils.data import DataLoader
-from pytorch_lightning import LightningDataModule
-from pytorch_lightning import seed_everything
+import numpy as np
+import torch
+from torch.utils.data import DataLoader, Dataset
+from torchvision import transforms
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+project_root = Path(__file__).parent.parent
+sys.path.append(str(project_root))
 from data.datasets import ImagenetDataset
 
 
 class ImageNetDataModule(LightningDataModule):
-    def __init__(self, cfg, specific_classes=None, train_transform=None, val_transform=None):
+    def __init__(self, cfg, train_transform=None, val_transform=None):
         """
         ImageNet data module for training and validation.
 
         Args:
             cfg:
-            specific_classes: classes to filter the dataset by
             train_transform: which transform to apply to the training images
             val_transform: which transform to apply to the validation images
         """
@@ -25,8 +26,6 @@ class ImageNetDataModule(LightningDataModule):
 
         self.num_workers = cfg.train.num_workers
         self.batch_size = cfg.test.batch_size
-
-        self.specific_classes = specific_classes
 
         self.train_transform = train_transform
         self.val_transform = val_transform
@@ -46,30 +45,26 @@ class ImageNetDataModule(LightningDataModule):
                 root_dir=self.data_dir,
                 split='train',
                 transform=self.train_transform,
-                specific_classes=self.specific_classes,
                 seed=self.seed
             )
 
             self.val_dataset = ImagenetDataset(
                 root_dir=self.data_dir,
                 split='val',
-                transform=self.val_transform,
-                specific_classes=self.specific_classes,
+                transform=self.val_transform
             )
 
         if stage == 'test':
             self.train_dataset = ImagenetDataset(
                 root_dir=self.data_dir,
                 split='train',
-                transform=self.val_transform,
-                specific_classes=list(range(bound[0], bound[1]))
+                transform=self.val_transform
             )
 
             self.val_dataset = ImagenetDataset(
                 root_dir=self.data_dir,
                 split='val',
-                transform=self.val_transform,
-                specific_classes=list(range(bound[0], bound[1]))
+                transform=self.val_transform
             )
             print(bound[0], bound[1])
 
@@ -77,8 +72,7 @@ class ImageNetDataModule(LightningDataModule):
             self.val_dataset = ImagenetDataset(
                 root_dir=self.data_dir,
                 split='val',
-                transform=self.val_transform,
-                specific_classes=self.specific_classes,
+                transform=self.val_transform
             )
 
         print(f"Train dataset size: {len(self.train_dataset)}")

@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 import pandas as pd
 from typing import List, Dict
 from omegaconf import DictConfig
@@ -87,10 +88,10 @@ def save_predictions_csv(data: pd.DataFrame, directory: str = 'results', filenam
         directory (str): The directory to save the CSV file.
         filename (str): Name of the CSV file to be saved in the 'results' directory.
     """
-    parent_dir = os.path.join(os.path.dirname(__file__), directory)
-    if not os.path.exists(parent_dir):
-        os.makedirs(parent_dir)
-    output_path = os.path.join(parent_dir, f'{filename}.csv')
+    parent_dir = Path(__file__).parent / directory
+    if not parent_dir.exists():
+        parent_dir.mkdir(parents=True, exist_ok=True)
+    output_path = parent_dir / f'{filename}.csv'
     data.to_csv(output_path, index=False)
 
 
@@ -111,6 +112,59 @@ def eval_on_clean_labels(df, clean_labels):
     print("Accuracy on original labels, same subset: ", np.round(merged['correct_orig'].mean() * 100, 2))
 
     return merged
+
+
+def save_accuracy_results_csv(predictions_df: pd.DataFrame, clean_labels_path: str, directory: str = 'results', filename: str = 'out'):
+    """
+    Saves accuracy results to CSV files including validation accuracy and clean validation accuracy.
+    
+    Args:
+        predictions_df (pd.DataFrame): DataFrame containing model predictions
+        clean_labels_path (str): Path to the clean validation labels CSV file
+        directory (str): Directory to save the CSV files
+        filename (str): Base filename for the CSV files
+    """
+    try:
+        # Load clean validation labels
+        clean_labels = pd.read_csv(clean_labels_path)
+        
+        # Calculate validation accuracy (top-1 accuracy on original labels)
+        if 'top_1_pred' in predictions_df.columns and 'original_label' in predictions_df.columns:
+            validation_accuracy = (predictions_df['top_1_pred'] == predictions_df['original_label']).mean() * 100
+        else:
+            validation_accuracy = 0.0
+            print("Warning: Could not calculate validation accuracy - missing required columns")
+        
+        # Calculate clean validation accuracy
+        try:
+            clean_results = eval_on_clean_labels(predictions_df, clean_labels)
+            clean_validation_accuracy = clean_results['correct_new'].mean() * 100
+        except Exception as e:
+            print(f"Warning: Could not calculate clean validation accuracy: {e}")
+            clean_validation_accuracy = 0.0
+        
+        # Create accuracy results DataFrame
+        accuracy_data = {
+            'Metric': ['Validation', 'Cleaner Validation'],
+            'Accuracy (%)': [round(validation_accuracy, 2), round(clean_validation_accuracy, 2)]
+        }
+        
+        accuracy_df = pd.DataFrame(accuracy_data)
+        
+        # Save accuracy results CSV
+        parent_dir = Path(__file__).parent / directory
+        if not parent_dir.exists():
+            parent_dir.mkdir(parents=True, exist_ok=True)
+        
+        accuracy_output_path = parent_dir / f'{filename}_accuracy.csv'
+        accuracy_df.to_csv(accuracy_output_path, index=False)
+        print(f'Accuracy results saved to: {accuracy_output_path}')
+        
+        return validation_accuracy, clean_validation_accuracy
+        
+    except Exception as e:
+        print(f"Error saving accuracy results: {e}")
+        return 0.0, 0.0
 
 
 def count_parameters_simple(model):

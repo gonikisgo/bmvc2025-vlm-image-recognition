@@ -1,10 +1,11 @@
-import os
 import sys
-import time
-from omegaconf import DictConfig
-import hydra
+from pathlib import Path
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..',  '..', '..')))
+import numpy as np
+import torch
+
+project_root = Path(__file__).parent.parent.parent.parent
+sys.path.append(str(project_root))
 from eval.models.radio_embedder_torch import RADIOTorchEmbedder
 from data.datamodules import ImageNetDataModule
 
@@ -12,7 +13,6 @@ from data.datamodules import ImageNetDataModule
 @hydra.main(version_base=None, config_path='../../../conf', config_name='base')
 def main(cfg: DictConfig) -> None:
     start_time = time.time()
-    specific_classes = cfg.data.cls_list if 'cls_list' in cfg.data else None
 
     model = RADIOTorchEmbedder(cfg)
 
@@ -20,8 +20,7 @@ def main(cfg: DictConfig) -> None:
     imagenet_data = ImageNetDataModule(
         cfg=cfg,
         train_transform=val_transform,
-        val_transform=val_transform,
-        specific_classes=specific_classes)
+        val_transform=val_transform)
     imagenet_data.setup(stage='test')
 
     if cfg.test.dataloader == 'val':

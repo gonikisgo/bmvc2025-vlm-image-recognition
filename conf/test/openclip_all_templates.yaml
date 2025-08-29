@@ -1,0 +1,12 @@
+model: 'OpenCLIP'
+exp_name: 'openclip_all_templates'
+folder: 'openclip' # Folder name to save results
+labels_option: 'mod'  # Class name strings to tokenize (VIT models only) # mod_v2
+context: 'all_templates'
+dataloader: 'val'  # 'val' for loading validation data, 'train' for loading train data
+num_workers: 8
+batch_size: 5
+topk: 11
+mode: 'base'  # Mode flag for saving
+save: True
+emb_space: openclip

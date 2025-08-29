@@ -12,10 +12,13 @@ from torchmetrics import Accuracy
 from pytorch_lightning import seed_everything
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from class_mapping import ClassDictionary
+from pathlib import Path
 
-sys.path.append(os.path.abspath(os.path.dirname(__file__)))
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from utils import save_predictions_csv
+project_root = Path(__file__).parent
+sys.path.append(str(project_root))
+project_root_parent = Path(__file__).parent.parent
+sys.path.append(str(project_root_parent))
+from utils import save_predictions_csv, save_accuracy_results_csv
 
 DEFAULT_NUM_CLASSES = 1000
 
@@ -29,13 +32,17 @@ class Classifier(pl.LightningModule):
         super().__init__()
 
         self.cfg = cfg
-        self.num_classes = cfg.data.n_classes
+        self.num_classes = DEFAULT_NUM_CLASSES
         self.data_dir = cfg.path.data_dir
 
         self.labels_to_save_df = None
         self.test_results = []
 
-        self.topk = self.cfg.test.topk
+        # For all_templates, ensure we save top-11 predictions
+        if self.cfg.test.context == 'all_templates':
+            self.topk = max(11, self.cfg.test.topk)
+        else:
+            self.topk = self.cfg.test.topk
         self.exp_name = None
         self.lr = None
         self.lr_scheduler = None
@@ -58,14 +65,7 @@ class Classifier(pl.LightningModule):
 
         if cfg.test.mode != 'dino':
             class_dict = ClassDictionary()
-
-            if self.num_classes != DEFAULT_NUM_CLASSES:
-                self.class_list = [class_dict.get_cls_index(int(i)) for i in cfg.data.cls_list]
-                self.class_names = [class_dict.get_custom_class_name(i) for i in cfg.data.cls_list]
-                self.im_to_orig = class_dict.create_id2idx_map(cfg.data.cls_list)
-            else:
-                self.class_names = np.load(cfg.path.class_names_path)
-
+            self.class_names = np.load(cfg.path.class_names_path)
             self.cls_name_dict = class_dict.create_idx2id_map(self.class_names)
 
     def configure_for_testing(self):
@@ -152,7 +152,7 @@ class Classifier(pl.LightningModule):
         image_names, x, y = batch
         x = x.to(self.device)
         y = y.to(self.device)
-        preds, probs, suppl = self.predict_step(x, y)
+        preds, probs = self.predict_step(x, y)
 
         loss = torch.tensor([0.])
         preds_ = preds[:, 0]
@@ -169,24 +169,9 @@ class Classifier(pl.LightningModule):
             'image_names': image_names,  # The names of the images in the batch for logging purposes
             'preds': preds,  # The predicted labels from the model, returned by the `predict_step`
             'probs': probs,  # The predicted probabilities from the model for each predicted class in a step
-            'supplement': suppl  # Additional supplemental information returned in case of extended running mode
         }
 
-    def create_label_confidence(self, original_labels, outputs):
-        if self.mode != 'base':
-            filtered_df = self.labels_to_save_df[self.labels_to_save_df['original_label'].isin(original_labels.tolist())]
-            proposed_labels = filtered_df['proposed_labels'].tolist()
 
-            suppl = [
-                [outputs[1, self.im_to_orig[int(ol_label)]], outputs[0, self.im_to_orig[int(ol_label)]],
-                 outputs[1, self.im_to_orig[int(pr_label)]] if not np.isnan(pr_label) else np.nan,
-                 outputs[0, self.im_to_orig[int(pr_label)]] if not np.isnan(pr_label) else np.nan]
-                for ol_label, pr_label in zip(original_labels, proposed_labels)
-            ]
-            suppl = [val.cpu().numpy() if isinstance(val, torch.Tensor) else val for item in suppl for val in item]
-            return np.array(suppl)
-        else:
-            return np.array([])
 
     def on_test_batch_end(self, outputs, batch, batch_idx):
         self.test_results.append(outputs)
@@ -212,22 +197,31 @@ class Classifier(pl.LightningModule):
                         'original_label': labels[i].item(),
                         'img_id': image_names[i]
                     }
-                    for j in range(self.topk):
+                    # For all_templates, save top-11 predictions, otherwise use configured topk
+                    save_topk = 11 if self.context == 'all_templates' else self.topk
+                    for j in range(save_topk):
                         if self.num_classes != DEFAULT_NUM_CLASSES:
                             row[f'top_{j + 1}_pred'] = list(self.im_to_orig.keys())[list(self.im_to_orig.values()).index(preds[i][j].item())]
                         else:
                             row[f'top_{j + 1}_pred'] = preds[i][j].item()
                         row[f'top_{j + 1}_prob'] = probs[i][j].item()
 
-                    if self.mode != 'base':
-                        suppl = output['supplement']
-                        row[f'original_label'] = suppl[0].item()
-                        row[f'original_label_conf'] = suppl[1].item()
-                        row[f'proposed_label'] = suppl[2].item()
-                        row[f'proposed_label_conf'] = suppl[3].item()
                     data.append(row)
 
+            # Save predictions CSV
             save_predictions_csv(pd.DataFrame(data), directory=f'run/{self.save_folder}/', filename=self.exp_name)
+            
+            # Save accuracy results CSV
+            try:
+                clean_labels_path = self.cfg.path.cleaner_validation
+                save_accuracy_results_csv(
+                    predictions_df=pd.DataFrame(data),
+                    clean_labels_path=clean_labels_path,
+                    directory=f'run/{self.save_folder}/',
+                    filename=self.exp_name
+                )
+            except Exception as e:
+                print(f"Warning: Could not save accuracy results: {e}")
 
 
 class TimmClassifier(Classifier):
@@ -264,9 +258,8 @@ class TimmClassifier(Classifier):
         with torch.no_grad(), torch.amp.autocast(self.device.type):
             outputs = self.model(images).softmax(dim=1)
             probs, preds = torch.topk(outputs, k=self.topk, dim=-1)
-            suppl = self.create_label_confidence(labels, outputs)
         torch.cuda.empty_cache()
-        return preds, probs, suppl
+        return preds, probs
 
 
 class HFTransformersClassifier(Classifier):
@@ -292,7 +285,7 @@ class HFTransformersClassifier(Classifier):
     context_template_6 = [lambda c: f"a {c} in a video game."]
     context_template_7 = [lambda c: f"a photo of the small {c}."]
 
-    mean7 = [
+    avg = [
         lambda c: f"itap of a {c}.",
         lambda c: f"a bad photo of the {c}.",
         lambda c: f"a origami {c}.",
@@ -302,7 +295,7 @@ class HFTransformersClassifier(Classifier):
         lambda c: f"a photo of the small {c}.",
     ]
 
-    mean8 = [
+    avg_prime = [
         lambda c: f"{c}",
         lambda c: f"itap of a {c}.",
         lambda c: f"a bad photo of the {c}.",
@@ -318,37 +311,143 @@ class HFTransformersClassifier(Classifier):
         self.model_name = cfg.test.model
         self.labels_option = cfg.test.labels_option
         self.context = cfg.test.context
-        print(self.context)
-
+        
+        # Validate and set up templates
+        self._setup_templates()
+        
         self.tokenizer = None
         self.tokenized_labels = None
         self.text_embeddings = None
         self.processor = None
 
-        self.context_map = {
-            'mean7': self.mean7,
-            'mean8': self.mean8,
-            '0': self.context_template_0,
-            '1': self.context_template_1,
-            '2': self.context_template_2,
-            '3': self.context_template_3,
-            '4': self.context_template_4,
-            '5': self.context_template_5,
-            '6': self.context_template_6,
-            '7': self.context_template_7,
+    def _setup_templates(self):
+        self._template_registry = {
+            '0': {
+                'templates': self.context_template_0,
+                'description': 'Base template (no prompt engineering)',
+                'count': 1
+            },
+            '1': {
+                'templates': self.context_template_1,
+                'description': 'Template 1: "itap of a {class}"',
+                'count': 1
+            },
+            '2': {
+                'templates': self.context_template_2,
+                'description': 'Template 2: "a bad photo of the {class}"',
+                'count': 1
+            },
+            '3': {
+                'templates': self.context_template_3,
+                'description': 'Template 3: "a origami {class}"',
+                'count': 1
+            },
+            '4': {
+                'templates': self.context_template_4,
+                'description': 'Template 4: "a photo of the large {class}"',
+                'count': 1
+            },
+            '5': {
+                'templates': self.context_template_5,
+                'description': 'Template 5: "art of the {class}"',
+                'count': 1
+            },
+            '6': {
+                'templates': self.context_template_6,
+                'description': 'Template 6: "a {class} in a video game"',
+                'count': 1
+            },
+            '7': {
+                'templates': self.context_template_7,
+                'description': 'Template 7: "a photo of the small {class}"',
+                'count': 1
+            },
+            'avg': {
+                'templates': self.avg,
+                'description': 'Average of 7 templates (excluding base)',
+                'count': 7
+            },
+            'avg\'': {
+                'templates': self.avg_prime,
+                'description': 'Average of 8 templates (including base)',
+                'count': 8
+            },
+            'all_templates': {
+                'templates': self.avg_prime,
+                'description': 'All 8 templates evaluated separately (no averaging)',
+                'count': 8
+            }
         }
-        self.openai_templates = self.context_map[self.context]
+        
+        if self.context not in self._template_registry:
+            available_templates = list(self._template_registry.keys())
+            raise ValueError(
+                f"Invalid context template '{self.context}'. "
+                f"Available templates: {', '.join(available_templates)}"
+            )
+        
+        self.openai_templates = self._template_registry[self.context]['templates']
+        template_info = self._template_registry[self.context]
+        
+        print(f"Using template '{self.context}': {template_info['description']}")
+        print(f"Number of prompt variations: {template_info['count']}")
+
+    def get_available_templates(self):
+        return self._template_registry.copy()
+
+    def get_current_template_info(self):
+        return self._template_registry[self.context]
 
     def _generate_label_variations(self, labels_to_templ=None):
         """
-        Generate label variations using predefined templates.
-
-        Returns:
-            List[str]: List of label variations.
+        Generate label variations using the active prompt templates.
         """
-        labels_list = np.load(
-            os.path.join(os.path.dirname(__file__), f'../../data/cls_names/cls_name_{self.labels_option}.npy'))
-        return [template(label) for label in labels_list for template in self.openai_templates]  # TODO Improve logic
+        if labels_to_templ is None:
+            # Load class names from file
+            labels_path = Path(__file__).parent.parent.parent / 'data' / 'cls_names' / f'cls_name_{self.labels_option}.npy'
+            if not labels_path.exists():
+                raise FileNotFoundError(f"Class names file not found: {labels_path}")
+            
+            labels_list = np.load(labels_path)
+        else:
+            labels_list = labels_to_templ
+        
+        # Special handling for all_templates: map all classes to each template
+        if self.context == 'all_templates':
+            variations = []
+            num_templates = len(self.openai_templates)
+            
+            # Outer loop: iterate through templates
+            for template_idx in range(num_templates):
+                template = self.openai_templates[template_idx]
+                # Inner loop: for each template, map ALL classes
+                for i, label in enumerate(labels_list):
+                    try:
+                        variation = template(label)
+                        variations.append(variation)
+                    except Exception as e:
+                        print(f"Warning: Failed to apply template to label '{label}': {e}")
+                        # Fallback to base label if template fails
+                        variations.append(str(label))
+            
+            print(f"Generated {len(variations)} label variations from {len(labels_list)} base labels using all_templates mapping")
+            print(f"Template mapping: {num_templates} templates × {len(labels_list)} classes = {len(variations)} total variations")
+            return variations
+        else:
+            # Apply all templates to all labels with error handling
+            variations = []
+            for label in labels_list:
+                for template in self.openai_templates:
+                    try:
+                        variation = template(label)
+                        variations.append(variation)
+                    except Exception as e:
+                        print(f"Warning: Failed to apply template to label '{label}': {e}")
+                        # Fallback to base label if template fails
+                        variations.append(str(label))
+            
+            print(f"Generated {len(variations)} label variations from {len(labels_list)} base labels")
+            return variations
 
     def _generate_text_embeddings(self):
         """

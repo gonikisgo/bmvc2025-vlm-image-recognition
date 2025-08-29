@@ -1,6 +1,5 @@
 defaults:
-  - path: rci
-  - data: imnet
+  - path: cmp
   - test: knn
   - train: effb1
   - _self_
