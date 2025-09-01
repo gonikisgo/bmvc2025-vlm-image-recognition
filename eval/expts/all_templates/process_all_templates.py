@@ -60,15 +60,12 @@ def process_all_templates_results(model_name: str, labels_option: str = 'mod', d
         raise ValueError(f"Model {model_name} not supported. Only SigLIP2 and OpenCLIP are supported for all_templates mode.")
     
     # Construct input filename based on model and labels option
-    # The models save CSV files in run/{folder}/ directory with exp_name from config
-    if model_name == 'SigLIP2':
-        input_filename = f'run/siglip2/siglip2_all_templates.csv'
-    elif model_name == 'OpenCLIP':
-        input_filename = f'run/openclip/openclip_all_templates.csv'
+    # The models save CSV files in VLM structure: eval/expts/vlm/{model}/
+    input_filename = f'eval/expts/vlm/{model_name}/{model_name}_classifier_all_templates_{labels_option}.csv'
     
-    # Define output filenames
-    output_filename = f'{dataloader}_{labels_option}_all_templates_processed.csv'
-    accuracy_filename = f'{dataloader}_{labels_option}_all_templates_accuracy.csv'
+    # Define output filenames with proper path structure
+    output_filename = f'eval/expts/vlm/{model_name}/{model_name}_classifier_all_templates_{labels_option}_processed.csv'
+    accuracy_filename = f'eval/expts/vlm/{model_name}/{model_name}_classifier_all_templates_{labels_option}_accuracy.csv'
     
     print(f"Processing {model_name} with {labels_option} labels and {dataloader} dataloader")
     print(f"Input file: {input_filename}")
@@ -78,8 +75,11 @@ def process_all_templates_results(model_name: str, labels_option: str = 'mod', d
     if not Path(input_filename).exists():
         print(f"Error: Input file {input_filename} not found!")
         print("Please ensure the model has been run with all_templates mode first.")
-        print(f"The file should be saved in: {input_filename}")
         return False
+    
+    # Ensure output directory exists
+    output_dir = Path(output_filename).parent
+    output_dir.mkdir(parents=True, exist_ok=True)
     
     try:
         # Step 1: Load and process predictions
@@ -106,9 +106,10 @@ def process_all_templates_results(model_name: str, labels_option: str = 'mod', d
         print(f"Dataloader: {dataloader}")
         print(f"Total samples: {len(df)}")
         print(f"K values processed: {k_values}")
-        print(f"Output files:")
-        print(f"  - Predictions: {output_filename}")
-        print(f"  - Accuracies: {accuracy_filename}")
+        print(f"Generated files:")
+        print(f"  1. Original predictions: {input_filename}")
+        print(f"  2. Processed predictions: {output_filename}")
+        print(f"  3. Accuracy results: {accuracy_filename}")
         print("="*50)
         
         return True

@@ -1,4 +1,4 @@
-model: 'SigLIP_v2_g_timm'
+model: 'SigLIP2'
 exp_name: 'siglip2_all_templates'
 folder: 'siglip2' # Folder name to save results
 labels_option: 'mod'  # Class name strings to tokenize (VIT models only) # mod
