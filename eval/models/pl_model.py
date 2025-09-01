@@ -215,16 +215,32 @@ class Classifier(pl.LightningModule):
             # Save predictions CSV and accuracy results CSV with appropriate structure
             model_name = getattr(self, 'model_name', self.cfg.test.model)
             
-            # Check if model is EfficientNet or in classifier mode - both should use structured saving
+            # Check if model is EfficientNet, EVA-02, or in classifier mode - both should use structured saving
             is_efficientnet = 'efficientnet' in model_name.lower()
+            is_eva02 = 'eva02' in model_name.lower()
+            is_supervised_model = is_efficientnet or is_eva02
             is_classifier_mode = self.mode == 'classifier'
             
-            if is_classifier_mode or is_efficientnet:
+            if is_classifier_mode or is_supervised_model:
                 # Determine save directory and filename format
-                if is_efficientnet:
-                    save_directory = f"eval/expts/supervised_models/{model_name}/"
+                if is_supervised_model:
+                    # For supervised models (EfficientNet, EVA-02), use model name
+                    if is_eva02:
+                        display_model_name = "EVA-02"
+                    elif is_efficientnet:
+                        # Handle EfficientNet naming: efficientnet_l2 -> EfficientNet-L2
+                        if model_name == 'efficientnet_l2':
+                            display_model_name = "EfficientNet-L2"
+                        elif model_name == 'efficientnet_v2':
+                            display_model_name = "EfficientNetV2"
+                        else:
+                            display_model_name = model_name.replace('_', '-').upper()
+                    else:
+                        display_model_name = model_name.replace('_', '-').upper()
+                    
+                    save_directory = f"eval/expts/supervised_models/{display_model_name}/"
                     directory_type = "supervised models"
-                    filename = model_name  # Use model name as filename for EfficientNet
+                    filename = display_model_name  # Use display model name as filename
                 else:
                     # Create VLM-style filename: model_mode_context_labels
                     context = getattr(self, 'context', self.cfg.test.get('context', '0'))
@@ -270,7 +286,8 @@ class TimmClassifier(Classifier):
     """
     model2timm = {
         'efficientnet_l2': 'hf_hub:timm/tf_efficientnet_l2.ns_jft_in1k',
-        'efficientnet_v2': 'hf_hub:timm/tf_efficientnetv2_xl.in21k_ft_in1k'
+        'efficientnet_v2': 'hf_hub:timm/tf_efficientnetv2_xl.in21k_ft_in1k',
+        'eva02': 'hf_hub:timm/eva02_large_patch14_448.mim_m38m_ft_in22k_in1k'
     }
 
     def __init__(self, cfg, is_training=False):

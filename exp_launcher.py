@@ -15,6 +15,7 @@ from eval.models.siglip2 import SigLIP2
 from eval.models.openclip import OpenCLIP
 from eval.models.radio import RADIOEmbedder
 from eval.models.radio_embedder_torch import RADIOTorchEmbedder
+from eval.models.eva02 import EVA02
 
 # ============================================================================
 # COLOR UTILITY FUNCTIONS
@@ -59,7 +60,8 @@ def count_model_parameters(model_name):
         'SigLIP': 'siglip',
         'SigLIP2': 'siglip2',
         'OpenCLIP': 'openclip',
-        'RADIO': 'radio'  # Use radio config for parameter counting
+        'RADIO': 'radio',  # Use radio config for parameter counting
+        'EVA-02': 'eva02'
     }
     
     if model_name not in config_map:
@@ -85,6 +87,8 @@ def count_model_parameters(model_name):
             model = OpenCLIP(cfg)
         elif model_name == 'RADIO':
             model = RADIOTorchEmbedder(cfg)  # Use torch version for parameter counting
+        elif model_name == 'EVA-02':
+            model = EVA02(cfg)
         
         # Count parameters
         # For RADIO, use the underlying model as it doesn't inherit from torch.nn.Module
@@ -139,7 +143,7 @@ def run_all_templates_processing(model_name, labels_option='mod', dataloader='va
         print("Output:", result.stdout)
     else:
         print_error("All templates processing failed!")
-        print_error("Error:", result.stderr)
+        print_error(f"Error: {result.stderr}")
         print("Output:", result.stdout)
     
     return result.returncode == 0
@@ -403,6 +407,8 @@ def show_usage():
     print("  # EfficientNet Classification:")
     print("  python exp_launcher.py EfficientNet-L2            # Run EfficientNet-L2 classifier")
     print("  # → Saves to: expts/supervised_models/EfficientNet-L2/EfficientNet-L2.csv")
+    print("  python exp_launcher.py EVA-02                      # Run EVA-02 classifier")
+    print("  # → Saves to: expts/supervised_models/EVA-02/EVA-02.csv")
     print("  # All Templates Evaluation:")
     print("  python exp_launcher.py SigLIP2 all_templates mod  # Run SigLIP2 in all_templates mode with mod labels")
     print("  # → Saves to: expts/vlm/SigLIP2/SigLIP2_classifier_all_templates_mod.csv")
@@ -453,12 +459,13 @@ def main():
         'DINOv2': ('dino', 'run_clip.py'),
         'EfficientNet-L2': ('effl2', 'run_efficientnet.py'),
         'EfficientNetV2': ('effv2', 'run_efficientnet.py'),
+        'EVA-02': ('eva02', 'run_eva02.py'),
         'RADIO': ('radio', 'run_radio.py')  # Default config, will be overridden based on mode
     }
     
     if model not in config_map:
         print(f"Unknown model: {model}")
-        print("Available: SigLIP, SigLIP2, CLIP, OpenCLIP, DINO, EfficientNet-L2, EfficientNet-V2, RADIO")
+        print("Available: SigLIP, SigLIP2, CLIP, OpenCLIP, DINO, EfficientNet-L2, EfficientNet-V2, EVA-02, RADIO")
         return
     
     config, run_script = config_map[model]
@@ -497,10 +504,10 @@ def main():
             return
     
     # Route to appropriate handler based on model type and mode
-    if model.startswith('EfficientNet'):
-        # EfficientNet models only support classifier mode
+    if model.startswith('EfficientNet') or model == 'EVA-02':
+        # EfficientNet models and EVA-02 only support classifier mode
         if mode != "classifier":
-            print(f"EfficientNet models only support classifier mode, ignoring mode: {mode}")
+            print(f"{model} models only support classifier mode, ignoring mode: {mode}")
         success = handle_efficientnet_classifier(model, config, run_script, template, labels_option)
     elif mode == "classifier":
         # VLM classification

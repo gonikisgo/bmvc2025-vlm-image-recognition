@@ -41,6 +41,8 @@ ENV/
 
 # Logs
 *.log
+lightning_logs/
+outputs/
 
 # Temporary files
 *.tmp

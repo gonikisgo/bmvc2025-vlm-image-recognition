@@ -166,8 +166,13 @@ def save_accuracy_results_csv(predictions_df: pd.DataFrame, clean_labels_path: s
         
         accuracy_df = pd.DataFrame(accuracy_data)
         
-        # Save accuracy results CSV - always route from project root to eval folder
-        save_dir = project_root / 'eval' / directory
+        # Save accuracy results CSV - handle directory path correctly
+        if directory.startswith('eval/'):
+            # If directory already starts with 'eval/', use it directly from project root
+            save_dir = project_root / directory
+        else:
+            # Otherwise, add 'eval/' prefix
+            save_dir = project_root / 'eval' / directory
         save_dir.mkdir(parents=True, exist_ok=True)
         accuracy_output_path = save_dir / f'{filename}_accuracy.csv'
         accuracy_df.to_csv(accuracy_output_path, index=False)

@@ -1,0 +1,10 @@
+model: 'eva02'
+exp_name: 'eva02_test'
+folder: 'eva02'
+dataloader: 'val'
+num_workers: 8
+batch_size: 5
+topk: 5
+mode: 'base'
+save: True
+emb_space: eva02
