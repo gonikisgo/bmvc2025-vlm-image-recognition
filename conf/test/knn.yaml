@@ -1,13 +1,13 @@
 topk: 51
-exp_name: 'radio_378_val_knn'
+exp_name: 'knn_classifier'
 folder: 4
-emb_space: 'radio-378' # so far can be 'clip', 'openclip', 'siglip', 'dino_old'
+emb_space: 'siglip2'  # embedding space to use: 'clip', 'openclip', 'siglip', 'siglipv2', 'siglipv2-g', 'dino', 'radio-378', 'radio-896', 'radio-1024'
 lower_bound: 0  # Number of the image in the folder at which the calculation should start
-upper_bound: 50000 # Number of sthe image in the folder at which the calculation should stop
+upper_bound: 50000 # Number of the image in the folder at which the calculation should stop
 nbrs_conf: 0.99  # Threshold for skipping neighbors with low confidence
 is_normalized: 0  # Flag are embeddings have been normalized
 mode: 'def'  # def, few-shot, kfold
-split: 'val'  # Split where to search for neighbours
+split: 'val'  # 'val': classify val using train neighbors, 'train': classify train using val neighbors
 m_sample: -1
 n_iterations: 125
 seed: 0

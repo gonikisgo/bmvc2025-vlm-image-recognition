@@ -1,16 +1,22 @@
 import sys
 from pathlib import Path
+from typing import Dict
 
 import numpy as np
 import torch
-from sklearn.neighbors import KNeighborsClassifier
+from sklearn.neighbors import NearestNeighbors
 from sklearn.metrics import accuracy_score
+from sklearn.model_selection import StratifiedKFold
+from collections import Counter
 import pickle
 import os
+import time
+import hydra
+from omegaconf import DictConfig
 
 project_root = Path(__file__).parent.parent.parent
 sys.path.append(str(project_root))
-from eval.utils import create_preds_df, save_predictions_csv, save_accuracy_results_csv, EmbsLoader
+from eval.utils import create_preds_df, save_predictions_csv, save_accuracy_results_csv, save_knn_accuracy_csv, save_few_shot_summary, EmbsLoader
 
 """
 A K-Nearest Neighbors (KNN) embedding classifier using cosine similarity.
@@ -19,13 +25,22 @@ A K-Nearest Neighbors (KNN) embedding classifier using cosine similarity.
 
 class KNNClassifier:
     def __init__(self, cfg):
+        self.mode = cfg.test.mode
+        self.cfg = cfg
+        
         if self.mode == 'few-shot':
             self.k = min(cfg.test.topk, cfg.test.m_sample)
         else:
             self.k = cfg.test.topk
 
         print(f'Using {self.k} nearest neighbors')
-        self.embs_loader = EmbsLoader(cfg)
+        
+        # Try to use embedder outputs first, fall back to original loader
+        embedder_dir = os.path.join("eval", "results", "embeddings", cfg.test.emb_space)
+        if os.path.exists(embedder_dir):
+            print(f"Using embedder outputs from: {embedder_dir}")
+            self.embs_loader = EmbsLoader(cfg)
+            
         self.is_data_loaded = False
         self.exp_name = cfg.test.exp_name
 
@@ -49,17 +64,17 @@ class KNNClassifier:
     def __fit(self):
         self.nn_classifier = NearestNeighbors(n_neighbors=self.k, metric='cosine')
         self.nn_classifier.fit(self.embeddings)
-        print(f'Fitted {len(self.embeddings)} train embeddings')
+        print(f'Fitted {len(self.embeddings)} neighbor embeddings')
 
-        print('Unique images in train:', len(np.unique(self.embeddings_d['image_name'])))
-        print('Unique images in val:', len(np.unique(self.val_embeddings_d['image_name'])))
+        print('Unique images in neighbors:', len(np.unique(self.embeddings_d['image_name'])))
+        print('Unique images to classify:', len(np.unique(self.val_embeddings_d['image_name'])))
         print(self.embeddings.shape, self.val_embeddings.shape)
 
-        print(f'Fitted {len(self.embeddings)} train embeddings')
+        print(f'Fitted {len(self.embeddings)} neighbor embeddings')
 
     def __find_duplicates(self):
         distances, indices = self.nn_classifier.kneighbors(self.val_embeddings)
-        print(f'Classified {len(self.val_embeddings)} val embeddings')
+        print(f'Classified {len(self.val_embeddings)} embeddings')
         similarities = 1 - distances
         indices = indices.tolist()
 
@@ -139,7 +154,7 @@ class KNNClassifier:
         print(f'last id {i}')
 
     def __sample_train_embs(self):
-        # Sample m embeddings per class
+        # Sample m embeddings per class from neighbor embeddings
         unique_labels = np.unique(self.embeddings_d['label'])
         print(f'Unique labels: {len(unique_labels)}')
         selected_indices = []
@@ -154,13 +169,13 @@ class KNNClassifier:
 
         print(selected_indices[:10])
 
-        # Filter training data
+        # Filter neighbor data
         for key in ['label', 'image_name', 'embedding']:
             self.embeddings_d[key] = self.embeddings_d[key][selected_indices]
 
-        print(f"Selected {len(selected_indices)} train embeddings from {len(unique_labels)} classes")
+        print(f"Selected {len(selected_indices)} neighbor embeddings from {len(unique_labels)} classes")
 
-        # Filter validation data
+        # Filter embeddings to classify
         if self.lower_bound > self.upper_bound:
             raise ValueError(
                 f"Invalid bounds: lower_bound ({self.lower_bound}) is greater than upper_bound ({self.upper_bound})")
@@ -170,7 +185,7 @@ class KNNClassifier:
 
         for key in ['label', 'image_name', 'embedding']:
             self.val_embeddings_d[key] = self.val_embeddings_d[key][self.lower_bound:self.upper_bound]
-            print(f'Loaded {len(self.val_embeddings_d[key])} val {key} embeddings')
+            print(f'Loaded {len(self.val_embeddings_d[key])} {key} embeddings to classify')
 
         self.embeddings = self.embeddings_d['embedding']
         self.val_embeddings = self.val_embeddings_d['embedding']
@@ -178,18 +193,33 @@ class KNNClassifier:
         self.is_data_loaded = True
 
     def __load_data(self):
-        self.embeddings_d = self.embs_loader.get_train_embeddings()
-        self.val_embeddings_d = self.embs_loader.get_val_embeddings()
+        if self.cfg.test.split == 'val':
+            # Default: use train embeddings to fit KNN, classify val embeddings
+            self.embeddings_d = self.embs_loader.get_train_embeddings()
+            self.val_embeddings_d = self.embs_loader.get_val_embeddings()
+        elif self.cfg.test.split == 'train':
+            # Reverse: use val embeddings to fit KNN, classify train embeddings
+            self.embeddings_d = self.embs_loader.get_val_embeddings()
+            self.val_embeddings_d = self.embs_loader.get_train_embeddings()
+        else:
+            raise ValueError(f"Unsupported split: {self.cfg.test.split}. Use 'train' or 'val'.")
 
         self.embeddings_d['embedding'] = np.array(self.embeddings_d['embedding'])
         self.val_embeddings_d['embedding'] = np.array(self.val_embeddings_d['embedding'])
+        
+        # Also convert labels and image_names to numpy arrays for consistent indexing
+        self.embeddings_d['label'] = np.array(self.embeddings_d['label'])
+        self.embeddings_d['image_name'] = np.array(self.embeddings_d['image_name'])
+        self.val_embeddings_d['label'] = np.array(self.val_embeddings_d['label'])
+        self.val_embeddings_d['image_name'] = np.array(self.val_embeddings_d['image_name'])
 
-        print(f"Loaded {len(self.val_embeddings_d['label'])} val embeddings")
+        print(f"Loaded {len(self.val_embeddings_d['label'])} embeddings to classify")
+        print(f"Loaded {len(self.embeddings_d['label'])} embeddings for KNN neighbors")
 
         if self.mode == 'few-shot':
             self.__sample_train_embs()
         else:
-            print('Default sampling: using all train embeddings')
+            print('Default sampling: using all neighbor embeddings')
             for key in ['label', 'image_name', 'embedding']:
                 if self.lower_bound > self.upper_bound:
                     raise ValueError(
@@ -198,7 +228,7 @@ class KNNClassifier:
                 if self.upper_bound > len(self.val_embeddings_d[key]):
                     self.upper_bound = len(self.val_embeddings_d[key]) + 1
                 self.val_embeddings_d[key] = self.val_embeddings_d[key][self.lower_bound:self.upper_bound]
-                print(f'Loaded {len(self.val_embeddings_d[key])} val {key} embeddings')
+                print(f'Loaded {len(self.val_embeddings_d[key])} {key} embeddings to classify')
 
             self.embeddings = self.embeddings_d['embedding']
             self.val_embeddings = self.val_embeddings_d['embedding']
@@ -208,37 +238,49 @@ class KNNClassifier:
     def __save_results(self, itt):
         if len(self.results) != 0:
             if self.mode == 'few-shot':
-                path = os.path.join('knn_train', 'few-shot', str(self.m_sample))
-                filename = self.exp_name + f'_{self.m_sample}_{itt}'
+                path = os.path.join('eval', 'results', 'knn', self.cfg.test.emb_space, 'few-shot', str(self.m_sample))
+                filename = f'{self.exp_name}_{self.cfg.test.split}_{self.m_sample}_{itt}'
             elif self.mode == 'kfold':
-                path = os.path.join('knn_train', 'kfold', str(self.kfold))
-                filename = self.exp_name + f'_{self.kfold}_{itt}'
+                path = os.path.join('eval', 'results', 'knn', self.cfg.test.emb_space, 'kfold', str(self.kfold))
+                filename = f'{self.exp_name}_{self.cfg.test.split}_{self.kfold}_{itt}'
             else:
-                path = os.path.join('knn_train', 'default')
-                filename = self.exp_name
+                path = os.path.join('eval', 'results', 'knn', self.cfg.test.emb_space)
+                filename = f'{self.exp_name}'
 
             # Save predictions CSV
-            save_predictions_csv(create_preds_df(self.results), directory=path, filename=filename)
-            print(f'Results saved in knn_train/{filename}.csv')
+            predictions_df = create_preds_df(self.results)
             
-            # Save accuracy results CSV
-            try:
-                clean_labels_path = self.cfg.path.cleaner_validation
-                save_accuracy_results_csv(
-                    predictions_df=create_preds_df(self.results),
-                    clean_labels_path=clean_labels_path,
-                    directory=path,
-                    filename=filename
-                )
-                print(f'Accuracy results saved in knn_train/{filename}_accuracy.csv')
-            except Exception as e:
-                print(f"Warning: Could not save accuracy results: {e}")
+            # For few-shot mode, save a simplified CSV without confidence columns
+            if self.mode == 'few-shot':
+                # Keep only essential columns for few-shot: original_label, img_id, and k_X_pred columns
+                essential_cols = ['original_label', 'img_id']
+                pred_cols = [col for col in predictions_df.columns if col.startswith('k_') and col.endswith('_pred')]
+                simplified_df = predictions_df[essential_cols + pred_cols]
+                save_predictions_csv(simplified_df, directory=path, filename=filename)
+            else:
+                save_predictions_csv(predictions_df, directory=path, filename=filename)
+                
+            print(f'Results saved in {path}/{filename}.csv')
+            
+            # Save KNN accuracy results CSV (only for non-few-shot modes)
+            if self.mode != 'few-shot':
+                try:
+                    clean_labels_path = self.cfg.path.cleaner_validation
+                    save_knn_accuracy_csv(
+                        predictions_df=predictions_df,
+                        clean_labels_path=clean_labels_path,
+                        directory=path,
+                        filename=filename
+                    )
+                    print(f'KNN accuracy results saved in {path}/{filename}_knn_accuracy.csv')
+                except Exception as e:
+                    print(f"Warning: Could not save KNN accuracy results: {e}")
         else:
             print('No results to save')
 
     def run(self):
         if self.mode == 'few-shot':
-            print(f"Sampling {self.m_sample} train embeddings per class")
+            print(f"Sampling {self.m_sample} neighbor embeddings per class")
             for i in range(self.n_iterations):
                 print(f"\n--- Iteration {i + 1}/{self.n_iterations} ---")
                 np.random.seed(self.seed + i)
@@ -246,6 +288,20 @@ class KNNClassifier:
                 self.__fit()
                 self.__find_duplicates_extend()
                 self.__save_results(itt=i+1)
+            
+            # After all iterations, process few-shot results and create summary
+            print(f"\n--- Processing Few-Shot Results ---")
+            try:
+                base_dir = os.path.join('eval', 'results', 'knn', self.cfg.test.emb_space, 'few-shot')
+                clean_labels_path = self.cfg.path.cleaner_validation
+                summary_path = save_few_shot_summary(
+                    base_dir=base_dir,
+                    m_sample=self.m_sample,
+                    clean_labels_path=clean_labels_path
+                )
+                print(f"✓ Few-shot accuracy summary with confidence intervals saved to: {summary_path}")
+            except Exception as e:
+                print(f"Warning: Could not generate few-shot summary: {e}")
 
         elif self.mode == 'kfold':
             print(f"Using {self.kfold} folds for cross-validation")

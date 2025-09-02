@@ -238,7 +238,7 @@ class Classifier(pl.LightningModule):
                     else:
                         display_model_name = model_name.replace('_', '-').upper()
                     
-                    save_directory = f"eval/expts/supervised_models/{display_model_name}/"
+                    save_directory = f"eval/results/supervised_models/{display_model_name}/"
                     directory_type = "supervised models"
                     filename = display_model_name  # Use display model name as filename
                 else:
@@ -246,8 +246,14 @@ class Classifier(pl.LightningModule):
                     context = getattr(self, 'context', self.cfg.test.get('context', '0'))
                     labels_option = getattr(self, 'labels_option', self.cfg.test.get('labels_option', 'mod'))
                     filename = f"{model_name}_{self.mode}_{context}_{labels_option}"
-                    save_directory = f"eval/expts/vlm/{model_name}/"
-                    directory_type = "VLM"
+                    
+                    # For all_templates mode, save to all_templates folder instead of vlm folder
+                    if context == 'all_templates':
+                        save_directory = f"eval/results/all_templates/{model_name}/"
+                        directory_type = "all_templates"
+                    else:
+                        save_directory = f"eval/results/vlm/{model_name}/"
+                        directory_type = "VLM"
                 
                 # Save to appropriate structure
                 save_predictions_csv(pd.DataFrame(data), directory=save_directory, filename=filename)

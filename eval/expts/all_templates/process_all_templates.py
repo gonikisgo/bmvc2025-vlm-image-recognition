@@ -60,12 +60,12 @@ def process_all_templates_results(model_name: str, labels_option: str = 'mod', d
         raise ValueError(f"Model {model_name} not supported. Only SigLIP2 and OpenCLIP are supported for all_templates mode.")
     
     # Construct input filename based on model and labels option
-    # The models save CSV files in VLM structure: eval/expts/vlm/{model}/
-    input_filename = f'eval/expts/vlm/{model_name}/{model_name}_classifier_all_templates_{labels_option}.csv'
-    
+    # The models save CSV files in all_templates structure: eval/results/all_templates/{model}/
+    input_filename = f'eval/results/all_templates/{model_name}/{model_name}_classifier_all_templates_{labels_option}.csv'
+
     # Define output filenames with proper path structure
-    output_filename = f'eval/expts/all_templates/{model_name}/{model_name}_classifier_all_templates_{labels_option}_processed.csv'
-    accuracy_filename = f'eval/expts/all_templates/{model_name}/{model_name}_classifier_all_templates_{labels_option}_accuracy.csv'
+    output_filename = f'eval/results/all_templates/{model_name}/{model_name}_classifier_all_templates_{labels_option}_processed.csv'
+    accuracy_filename = f'eval/results/all_templates/{model_name}/{model_name}_classifier_all_templates_{labels_option}_accuracy.csv'
     
     print(f"Processing {model_name} with {labels_option} labels and {dataloader} dataloader")
     print(f"Input file: {input_filename}")
