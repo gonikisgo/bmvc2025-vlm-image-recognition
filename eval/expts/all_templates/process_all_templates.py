@@ -64,8 +64,8 @@ def process_all_templates_results(model_name: str, labels_option: str = 'mod', d
     input_filename = f'eval/expts/vlm/{model_name}/{model_name}_classifier_all_templates_{labels_option}.csv'
     
     # Define output filenames with proper path structure
-    output_filename = f'eval/expts/vlm/{model_name}/{model_name}_classifier_all_templates_{labels_option}_processed.csv'
-    accuracy_filename = f'eval/expts/vlm/{model_name}/{model_name}_classifier_all_templates_{labels_option}_accuracy.csv'
+    output_filename = f'eval/expts/all_templates/{model_name}/{model_name}_classifier_all_templates_{labels_option}_processed.csv'
+    accuracy_filename = f'eval/expts/all_templates/{model_name}/{model_name}_classifier_all_templates_{labels_option}_accuracy.csv'
     
     print(f"Processing {model_name} with {labels_option} labels and {dataloader} dataloader")
     print(f"Input file: {input_filename}")

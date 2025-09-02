@@ -170,7 +170,7 @@ def validate_vlm_classifier_params(template, labels_option):
     
     return True
 
-def validate_all_templates_params(model, labels_option):
+def validate_all_templates_params(model):
     """Validate parameters for all_templates mode."""
     if model not in ["SigLIP2", "OpenCLIP"]:
         print_error(f"all_templates mode is only supported for SigLIP2 and OpenCLIP models")
@@ -298,7 +298,7 @@ def handle_all_templates_evaluation(model, labels_option, config, run_script):
     print(f"Running {model} in all_templates mode")
     
     # Validate parameters
-    if not validate_all_templates_params(model, labels_option):
+    if not validate_all_templates_params(model):
         return False
     
     # Set default labels_option if not provided
@@ -379,7 +379,11 @@ def handle_dino_model(mode, template, labels_option, dataloader):
 
 def show_usage():
     """Display usage information."""
-    print("Usage: python exp_launcher.py <model_name> [mode] [template/dataloader] [labels_option]")
+    print("Usage:")
+    print("  python exp_launcher.py <model_name> classifier [template] [labels_option]")
+    print("  python exp_launcher.py <model_name> all_templates [labels_option]") 
+    print("  python exp_launcher.py <model_name> embedder [dataloader]")
+    print("  python exp_launcher.py <model_name> count_params")
     print("Models: SigLIP, SigLIP2, CLIP, OpenCLIP, DINO, EfficientNet-L2, EfficientNet-V2, RADIO")
     print("Modes: classifier (default), embedder (not available for EfficientNet, DINO only), count_params, all_templates")
     print("Templates: 0-7, avg, avg_prime (only for classifier mode of VLM models)")
@@ -438,17 +442,22 @@ def main():
         return
     
     # Parse parameters based on mode
-    # For classifier and all_templates: template and labels_option
+    # For classifier: template and labels_option
+    # For all_templates: only labels_option (no template)  
     # For embedder: dataloader (using template position)
-    template = sys.argv[3] if len(sys.argv) > 3 else None
-    labels_option = sys.argv[4] if len(sys.argv) > 4 else None
+    template = None
+    labels_option = None
     dataloader = None
     
-    # For embedder mode, repurpose template parameter as dataloader
-    if mode == "embedder":
-        dataloader = template  # Use template position for dataloader
-        template = None  # Embedders don't use templates
-        labels_option = None  # Embedders don't use labels_option
+    if mode == "classifier":
+        template = sys.argv[3] if len(sys.argv) > 3 else None
+        labels_option = sys.argv[4] if len(sys.argv) > 4 else None
+    elif mode == "all_templates":
+        # For all_templates mode, labels_option is in position 3 (no template parameter)
+        labels_option = sys.argv[3] if len(sys.argv) > 3 else None
+    elif mode == "embedder":
+        # For embedder mode, repurpose template parameter as dataloader
+        dataloader = sys.argv[3] if len(sys.argv) > 3 else None
     
     # Map model names to config files and run scripts
     config_map = {
@@ -481,8 +490,6 @@ def main():
     
     # Validate mode-specific constraints before any model-specific handling
     if mode == "all_templates":
-        if not validate_all_templates_params(model, labels_option):
-            return
         success = handle_all_templates_evaluation(model, labels_option, config, run_script)
         return  # Early return after handling all_templates
     
