@@ -555,6 +555,95 @@ def handle_dino_model(mode, template, labels_option, dataloader):
     return mode, template, labels_option, dataloader
 
 # ============================================================================
+# COMBINATION MODEL HANDLING
+# ============================================================================
+
+def handle_combination_model():
+    """Handle combination model pipeline - runs VL precision, k-fold precision, then combination model."""
+    print("Running combination model pipeline...")
+    print("This will execute three scripts in sequence:")
+    print("1. eval/expts/vlm/calc_vl_cls_precision.py")
+    print("2. eval/expts/kfold/calc_v_cls_precision.py") 
+    print("3. eval/expts/vlm/SigLIP2/combination_model.py")
+    print("=" * 70)
+    
+    success = True
+    
+    # Step 1: Run VL classification precision calculation (from eval/expts/vlm directory)
+    print("\n🔄 Step 1: Running VL classification precision calculation...")
+    cmd1 = [sys.executable, "calc_vl_cls_precision.py"]
+    print(f"Running command: {' '.join(cmd1)} (from eval/expts/vlm/)")
+    result1 = subprocess.run(cmd1, capture_output=True, text=True, cwd="eval/expts/vlm")
+    
+    if result1.returncode == 0:
+        print_success("✓ VL classification precision calculation completed successfully!")
+        if result1.stdout.strip():
+            print("Output:", result1.stdout)
+    else:
+        print_error("✗ VL classification precision calculation failed!")
+        print_error(f"Error: {result1.stderr}")
+        if result1.stdout.strip():
+            print("Output:", result1.stdout)
+        success = False
+    
+    # Step 2: Run k-fold precision calculation (from eval/expts/kfold directory)
+    if success:
+        print("\n🔄 Step 2: Running k-fold precision calculation...")
+        cmd2 = [sys.executable, "calc_v_cls_precision.py"]
+        print(f"Running command: {' '.join(cmd2)} (from eval/expts/kfold/)")
+        result2 = subprocess.run(cmd2, capture_output=True, text=True, cwd="eval/expts/kfold")
+        
+        if result2.returncode == 0:
+            print_success("✓ K-fold precision calculation completed successfully!")
+            if result2.stdout.strip():
+                print("Output:", result2.stdout)
+        else:
+            print_error("✗ K-fold precision calculation failed!")
+            print_error(f"Error: {result2.stderr}")
+            if result2.stdout.strip():
+                print("Output:", result2.stdout)
+            success = False
+    
+    # Step 3: Run combination model (from eval/expts/vlm/SigLIP2 directory)
+    if success:
+        print("\n🔄 Step 3: Running combination model...")
+        cmd3 = [sys.executable, "combination_model.py"]
+        print(f"Running command: {' '.join(cmd3)} (from eval/expts/vlm/SigLIP2/)")
+        result3 = subprocess.run(cmd3, capture_output=True, text=True, cwd="eval/expts/vlm/SigLIP2")
+        
+        if result3.returncode == 0:
+            print_success("✓ Combination model completed successfully!")
+            if result3.stdout.strip():
+                # Print output but limit to reasonable length
+                output_lines = result3.stdout.strip().split('\n')
+                if len(output_lines) > 20:
+                    print("Output (first 20 lines):")
+                    for line in output_lines[:20]:
+                        print("  ", line)
+                    print(f"  ... ({len(output_lines) - 20} more lines)")
+                else:
+                    print("Output:")
+                    for line in output_lines:
+                        print("  ", line)
+        else:
+            print_error("✗ Combination model failed!")
+            print_error(f"Error: {result3.stderr}")
+            if result3.stdout.strip():
+                print("Output:", result3.stdout)
+            success = False
+    
+    # Final status
+    print("\n" + "=" * 70)
+    if success:
+        print_success("🎉 Combination model pipeline completed successfully!")
+        print("All three steps executed without errors.")
+    else:
+        print_error("❌ Combination model pipeline failed!")
+        print("One or more steps encountered errors. Check the output above for details.")
+    
+    return success
+
+# ============================================================================
 # MAIN FUNCTION
 # ============================================================================
 
@@ -567,8 +656,9 @@ def show_usage():
     print("  python exp_launcher.py <model_name> count_params")
     print("  python exp_launcher.py knn <embedding_space> [set]")
     print("  python exp_launcher.py few-shot <embedding_space> <m_sample>")
+    print("  python exp_launcher.py <model_name> combination")
     print("Models: SigLIP, SigLIP2, CLIP, OpenCLIP, DINOv2, EfficientNet-L2, EfficientNet-V2, RADIO")
-    print("Modes: classifier (default), embedder (not available for EfficientNet, DINOv2 only), count_params, all_templates, knn, few-shot")
+    print("Modes: classifier (default), embedder (not available for EfficientNet, DINOv2 only), count_params, all_templates, knn, few-shot, combination")
     print("Templates: 0-7, avg, avg_prime (only for classifier mode of VLM models)")
     print("Dataloaders: train, val (only for embedder mode, defaults to 'val')")
     print("Labels Options: wordnet, openai, mod (only for VLM models, ignored for EfficientNet and RADIO)")
@@ -625,6 +715,9 @@ def show_usage():
     print("  python exp_launcher.py few-shot SigLIP2 20       # Run few-shot KNN with SigLIP2 embeddings, 20 samples per class")
     print("  # → Runs 125 iterations (2500/20), saves results in eval/results/knn/SigLIP2/few-shot/20/")
     print("  # → Summary: eval/results/knn/SigLIP2/few-shot/20_shot_accuracy_summary.csv")
+    print("  # Combination Model:")
+    print("  python exp_launcher.py SigLIP2 combination       # Run combination model pipeline")
+    print("  # → Calculates VL precision, k-fold precision, then combines models")
     print("  # Special cases:")
     print("  python exp_launcher.py RADIO classifier           # Run RADIO classifier (uses radio config & run_radio_torch.py)")
     print("  # → Saves to: results/vlm/RADIO/RADIO_classifier_0_mod.csv")
@@ -648,6 +741,21 @@ def main():
 
     model = sys.argv[1]
     
+    # Handle KNN mode specially
+    if model.lower() == 'knn':
+        if len(sys.argv) < 3:
+            print_error("KNN mode requires an embedding_space parameter")
+            show_usage()
+            return
+        
+        embedding_space = sys.argv[2]
+        set_param = sys.argv[3] if len(sys.argv) > 3 else None
+        
+        success = handle_knn_classifier(embedding_space, set_param)
+        if not success:
+            print_error("Failed to run KNN classifier")
+        return
+    
     # Handle few-shot mode specially
     if model.lower() == 'few-shot':
         if len(sys.argv) < 4:
@@ -670,22 +778,19 @@ def main():
             print_error("Failed to run few-shot KNN classifier")
         return
     
-    # Handle KNN mode specially
-    if model.lower() == 'knn':
-        if len(sys.argv) < 3:
-            print_error("KNN mode requires an embedding_space parameter")
-            show_usage()
+    mode = sys.argv[2] if len(sys.argv) > 2 else "classifier"
+    
+    # Handle combination mode specially - requires SigLIP2 as model
+    if mode.lower() == 'combination':
+        if model != 'SigLIP2':
+            print_error(f"Combination mode only supports SigLIP2 model, got: {model}")
+            print("Please use: python exp_launcher.py SigLIP2 combination")
             return
         
-        embedding_space = sys.argv[2]
-        set_param = sys.argv[3] if len(sys.argv) > 3 else None
-        
-        success = handle_knn_classifier(embedding_space, set_param)
+        success = handle_combination_model()
         if not success:
-            print_error("Failed to run KNN classifier")
+            print_error("Failed to run combination model pipeline")
         return
-    
-    mode = sys.argv[2] if len(sys.argv) > 2 else "classifier"
     
     # Handle count_params mode
     if mode == "count_params":
@@ -733,7 +838,7 @@ def main():
     # Validate mode
     if mode not in ["classifier", "embedder", "all_templates"]:
         print(f"Unknown mode: {mode}")
-        print("Available modes: classifier, embedder, all_templates, knn")
+        print("Available modes: classifier, embedder, all_templates, combination, knn, few-shot")
         return
     
     # Handle different model types and modes
