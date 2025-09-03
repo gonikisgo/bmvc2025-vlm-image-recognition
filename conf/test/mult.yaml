@@ -1,0 +1,8 @@
+mode: mult
+emb_space: RADIO_378  # Will be overridden based on model and resolution
+context: '0'  # Template context
+labels_option: mod  # Labels option
+dataloader: val  # train or val
+topk: 5
+folder: OpenCLIP  # Text embeddings folder
+exp_name: mult

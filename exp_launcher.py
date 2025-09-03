@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
+import os
 import sys
 import subprocess
 import torch
+import hydra
 from pathlib import Path
+from omegaconf import DictConfig
 
 # Add the project root to the path to import eval modules
 project_root = Path(__file__).parent
@@ -48,8 +51,6 @@ def print_warning(message):
 
 def count_model_parameters(model_name):
     """Count parameters for a specific model using its actual config."""
-    import hydra
-    from omegaconf import DictConfig
     
     print(f"Counting parameters for {model_name}...")
     print("=" * 50)
@@ -314,6 +315,161 @@ def handle_vlm_classifier(model, template, labels_option, config, run_script, sp
     return result.returncode == 0
 
 # ============================================================================
+# RADIO CLASSIFICATION HANDLING
+# ============================================================================
+
+def handle_radio_classifier(model, template, labels_option, config, run_script, split, resolution):
+    """Handle RADIO model in classifier mode - runs RADIO, then OpenCLIP text embedder, then multiplication."""
+    # Validate that all required parameters are provided
+    if template is None:
+        print_error("RADIO classifier requires template parameter")
+        print("Available templates: 0-7, avg, avg_prime")
+        return False
+    if labels_option is None:
+        print_error("RADIO classifier requires labels_option parameter")
+        print("Available labels_options: wordnet, openai, mod")
+        return False
+    
+    print(f"Running {model} in classifier mode with resolution {resolution}")
+    print("This will execute three steps:")
+    print("1. Run RADIO model for image embeddings")
+    print("2. Run OpenCLIP text embedder with provided template and labels")
+    print("3. Run multiplication of embeddings and evaluate on clean labels")
+    print("=" * 70)
+    
+    # Create filename suffix based on split
+    split_suffix = "_train" if split == 'train' else ""
+    context = template
+    labels = labels_option
+    
+    # Create model name with resolution for file paths
+    model_with_resolution = f"{model}_{resolution}"
+    
+    print(f"Split: {split}")
+    print(f"Template: {context}")
+    print(f"Labels option: {labels}")
+    print(f"Resolution: {resolution}")
+    
+    # Validate parameters
+    if not validate_vlm_classifier_params(template, labels_option, split):
+        return False
+    
+    # Validate resolution
+    if resolution not in [378, 896]:
+        print_error(f"Invalid resolution for RADIO classifier: {resolution}")
+        print("Available resolutions: 378, 896")
+        return False
+    
+    success = True
+    
+    # Check if RADIO embeddings already exist
+    embeddings_file = f"eval/results/embeddings/{model_with_resolution}/{model_with_resolution}_{split if split == 'train' else 'val'}.npy"
+    
+    if os.path.exists(embeddings_file):
+        print(f"\n✅ RADIO embeddings already exist: {embeddings_file}")
+        print("Skipping Step 1 (RADIO model for image embeddings)")
+        print_success("✓ RADIO embeddings found, proceeding to Step 2")
+    else:
+        # Step 1: Run RADIO model for image embeddings
+        print(f"\n🔄 Step 1: Running RADIO model for image embeddings...")
+        print(f"Results will be saved to: eval/results/embeddings/{model_with_resolution}/")
+        
+        # Build RADIO command
+        radio_cmd = [sys.executable, f"eval/run/{run_script}", f"test={config}"]
+        radio_cmd.append(f"test.mode=classifier")
+        radio_cmd.append(f"test.resolution={resolution}")
+        radio_cmd.append(f"test.dataloader={split}")
+        
+        print(f"Running RADIO command: {' '.join(radio_cmd)}")
+        radio_result = subprocess.run(radio_cmd)
+        
+        if radio_result.returncode == 0:
+            print_success("✓ RADIO model completed successfully!")
+            print(f"✓ RADIO embeddings saved to: eval/results/embeddings/{model_with_resolution}/{model_with_resolution}_{split if split == 'train' else 'val'}.npy")
+        else:
+            print_error("✗ RADIO model failed!")
+            success = False
+    
+    # Step 2: Run OpenCLIP text embedder with provided template and labels
+    if success:
+        text_embeddings_file = f"eval/results/text_embeddings/OpenCLIP/OpenCLIP_text_embeddings_{context}_{labels}.npy"
+        
+        if os.path.exists(text_embeddings_file):
+            print(f"\n✅ OpenCLIP text embeddings already exist: {text_embeddings_file}")
+            print("Skipping Step 2 (OpenCLIP text embedder)")
+            print_success("✓ Text embeddings found, proceeding to Step 3")
+        else:
+            print(f"\n🔄 Step 2: Running OpenCLIP text embedder...")
+            print(f"Template: {context}, Labels: {labels}")
+            print(f"Results will be saved to: eval/results/text_embeddings/OpenCLIP/")
+            
+            # Build OpenCLIP command
+            openclip_cmd = [sys.executable, "eval/run/run_clip.py", "test=openclip"]
+            openclip_cmd.append("test.mode=text_embedder")
+            
+            # Add template parameter (always present after validation)
+            openclip_cmd.append(f"test.context='{context}'")
+            
+            # Add labels_option parameter (always present after validation)
+            openclip_cmd.append(f"test.labels_option={labels}")
+            
+            print(f"Running OpenCLIP command: {' '.join(openclip_cmd)}")
+            openclip_result = subprocess.run(openclip_cmd)
+            
+            if openclip_result.returncode == 0:
+                print_success("✓ OpenCLIP text embedder completed successfully!")
+                print(f"✓ OpenCLIP text embeddings saved to: {text_embeddings_file}")
+            else:
+                print_error("✗ OpenCLIP text embedder failed!")
+                success = False
+    
+    # Step 3: Run multiplication of embeddings and evaluate on clean labels
+    if success:
+        print(f"\n🔄 Step 3: Running multiplication of embeddings...")
+        print(f"Multiplying RADIO image embeddings with OpenCLIP text embeddings")
+        print(f"Results will be saved to: eval/results/vlm/{model_with_resolution}/{model_with_resolution}_classifier_{context}_{labels}{split_suffix}.csv")
+        
+        # Build multiplication command
+        mult_cmd = [sys.executable, "eval/run/run_mult.py", "test=mult"]
+        
+        # Set embedding space to RADIO model with resolution
+        mult_cmd.append(f"test.emb_space={model_with_resolution}")
+        
+        # Add template parameter 
+        mult_cmd.append(f"test.context={context}")
+        
+        # Add labels_option parameter
+        mult_cmd.append(f"test.labels_option={labels}")
+        
+        # Add dataloader parameter
+        mult_cmd.append(f"test.dataloader={split}")
+        
+        print(f"Running multiplication command: {' '.join(mult_cmd)}")
+        mult_result = subprocess.run(mult_cmd)
+        
+        if mult_result.returncode == 0:
+            print_success("✓ Multiplication and evaluation completed successfully!")
+            print(f"✓ Final results saved to: eval/results/vlm/{model_with_resolution}/{model_with_resolution}_classifier_{context}_{labels}{split_suffix}.csv")
+            print(f"✓ Accuracy results saved to: eval/results/vlm/{model_with_resolution}/{model_with_resolution}_classifier_{context}_{labels}{split_suffix}_accuracy.csv")
+        else:
+            print_error("✗ Multiplication and evaluation failed!")
+            success = False
+    
+    # Final status
+    print("\n" + "=" * 70)
+    if success:
+        print_success("🎉 RADIO classifier pipeline completed successfully!")
+        print("All three steps completed:")
+        print("✓ RADIO image embeddings generated")
+        print("✓ OpenCLIP text embeddings generated") 
+        print("✓ Multiplication performed and clean label evaluation completed")
+    else:
+        print_error("❌ RADIO classifier pipeline failed!")
+        print("One or more steps encountered errors. Check the output above for details.")
+    
+    return success
+
+# ============================================================================
 # VLM EMBEDDER HANDLING
 # ============================================================================
 
@@ -449,7 +605,6 @@ def handle_few_shot_knn(embedding_space, m_sample, split='val'):
     train_embedding_file = f"{embeddings_base_dir}/{embedding_space}/{embedding_space}_train.npy"
     val_embedding_file = f"{embeddings_base_dir}/{embedding_space}/{embedding_space}_val.npy"
     
-    import os
     if not os.path.exists(train_embedding_file):
         print_error(f"Train embedding file not found: {train_embedding_file}")
         print(f"Please run: python exp_launcher.py {embedding_space} embedder train")
@@ -517,7 +672,6 @@ def handle_knn_classifier(embedding_space, set_param):
     train_embedding_file = f"{embeddings_base_dir}/{embedding_space}/{embedding_space}_train.npy"
     val_embedding_file = f"{embeddings_base_dir}/{embedding_space}/{embedding_space}_val.npy"
 
-    import os
     if not os.path.exists(train_embedding_file):
         print_error(f"Train embedding file not found: {train_embedding_file}")
         print(f"Please run: python exp_launcher.py {embedding_space} embedder train")
@@ -580,7 +734,6 @@ def handle_kfold_validation(embedding_space, n_folds, split):
     embeddings_base_dir = "eval/results/embeddings"
     embedding_file = f"{embeddings_base_dir}/{actual_model_name}/{actual_model_name}_{split}.npy"
     
-    import os
     if not os.path.exists(embedding_file):
         print_error(f"Embedding file not found: {embedding_file}")
         print(f"Please run: python exp_launcher.py {actual_model_name} embedder train")
@@ -632,15 +785,25 @@ def handle_kfold_validation(embedding_space, n_folds, split):
 # SPECIAL MODEL HANDLING
 # ============================================================================
 
-def handle_radio_model(mode, config, run_script):
+def handle_radio_model(mode, config, run_script, resolution=None):
     """Handle RADIO model with appropriate config and script selection."""
     if mode == 'classifier' or mode == 'count_params':
+        # For classifier mode, use radio_embedder_torch with resolution support
         config = 'radio'
         run_script = 'run_radio_torch.py'
+        
+        # Validate resolution
+        if resolution not in [378, 896]:
+            print_error(f"Invalid resolution for RADIO classifier: {resolution}")
+            print("Available resolutions: 378, 896")
+            return None, None, None
+        
+        print(f"Using RADIO classifier with resolution: {resolution}")
+        return config, run_script, resolution
     else:  # embedder mode
         config = 'radio_embedder'
         run_script = 'run_radio.py'
-    return config, run_script
+        return config, run_script, None
 
 def handle_dino_model(mode, template, labels_option, dataloader):
     """Handle DINO model (embedder only)."""
@@ -695,7 +858,6 @@ def handle_combination_model():
         print("\n🔄 Checking for SigLIP2 10-fold k-fold results...")
         
         # Check if 10-fold results exist for SigLIP2
-        import os
         kfold_dir = "eval/results/kfold/10fold_train"
         required_files = [f"SigLIP2_10fold_{i}.csv" for i in range(1, 11)]
         missing_files = []
@@ -785,9 +947,15 @@ def handle_combination_model():
 # ============================================================================
 
 def show_usage():
-    """Display usage information."""
-    print("Usage:")
-    print("  python exp_launcher.py <model_name> classifier [template] [labels_option] [split]")
+    """Display comprehensive usage information for all supported modes."""
+    print("=" * 80)
+    print("🚀 BMVC 2025 VLM Image Recognition - Experiment Launcher")
+    print("=" * 80)
+    print("\n📋 QUICK USAGE:")
+    print("  python exp_launcher.py -help                           # Show this help message")
+    print("  python exp_launcher.py <model_name> <mode> [options]   # Run specific model and mode")
+    print("\n📝 BASIC SYNTAX:")
+    print("  python exp_launcher.py <model_name> classifier [template] [labels_option] [split] [resolution]")
     print("  python exp_launcher.py <model_name> all_templates [labels_option]") 
     print("  python exp_launcher.py <model_name> embedder [dataloader]")
     print("  python exp_launcher.py <model_name> count_params")
@@ -795,115 +963,177 @@ def show_usage():
     print("  python exp_launcher.py few-shot <embedding_space> <m_sample>")
     print("  python exp_launcher.py <embedding_space> kfold <n_folds> <split>")
     print("  python exp_launcher.py <model_name> combination")
-    print("Models: SigLIP, SigLIP2, CLIP, OpenCLIP, DINOv2, EfficientNet-L2, EfficientNet-V2, RADIO")
-    print("Modes: classifier (default), embedder (not available for EfficientNet, DINOv2 only), count_params, all_templates, knn, few-shot, kfold, combination")
-    print("Templates: 0-7, avg, avg_prime (only for classifier mode of VLM models)")
-    print("Dataloaders: train, val (only for embedder mode, defaults to 'val')")
-    print("Labels Options: wordnet, openai, mod (only for VLM models, ignored for EfficientNet and RADIO)")
-    print("Splits: train, val (only for classifier mode of VLM models, defaults to 'val')")
-    print("  - val: classify validation set (default)")
-    print("  - train: classify training set (adds '_train' suffix to output files)")
-    print("Embedding Spaces (for KNN): SigLIP, SigLIP2, CLIP, OpenCLIP, DINOv2, RADIO")
-    print("KNN Sets: train, val (defaults to 'val')")
-    print("  - val: classify validation set using training set as neighbors")
-    print("  - train: classify training set using validation set as neighbors")
-    print("Few-shot m_sample: Integer representing reference set size per class (e.g., 10, 20, 50)")
-    print("  - Number of iterations automatically calculated as 2500/m_sample")
-    print("  - Only supports val split (classify val set using sampled train neighbors)")
-    print("K-fold n_folds: Integer representing number of folds for cross-validation (e.g., 5, 10)")
-    print("  - Performs stratified k-fold cross-validation on the specified split")
-    print("  - Supports both train and val splits")
-    print("\nOutput Structure:")
-    print("  VLM Classifiers: Results saved to results/vlm/{model_name}/{model_name}_classifier_{context}_{labels_option}[_train].csv")
-    print("  EfficientNet and EVA-02 Classifiers: Results saved to results/supervised_models/{model_name}/{model_name}[_train].csv")
-    print("  Embedders: Results saved to eval/results/embeddings/{model_name}/{model_name}_{dataloader}.npy")
-    print("  KNN Classifiers: Results saved to eval/results/knn/{embedding_space}/knn_{embedding_space}_{set}.csv")
-    print("  Few-shot KNN: Individual CSVs in eval/results/knn/{embedding_space}/few-shot/{m_sample}/")
-    print("               Summary with CI in eval/results/knn/{embedding_space}/few-shot/{m_sample}_shot_accuracy_summary.csv")
-    print("  K-fold Cross-validation: Results saved to eval/results/kfold/{n_folds}fold_{split}/")
-    print("                          Individual fold results: {embedding_space}_{n_folds}fold_[1-{n_folds}].csv")
-    print("\nExamples:")
-    print("  # VLM Classification:")
-    print("  python exp_launcher.py CLIP classifier 0 wordnet  # Run CLIP classifier with template 0 and WordNet labels on val set")
-    print("  # → Saves to: results/vlm/CLIP/CLIP_classifier_0_wordnet.csv")
-    print("  python exp_launcher.py CLIP classifier 0 wordnet train  # Run CLIP classifier on train set")
-    print("  # → Saves to: results/vlm/CLIP/CLIP_classifier_0_wordnet_train.csv")
-    print("  python exp_launcher.py SigLIP classifier avg openai  # Run SigLIP classifier with avg template and OpenAI labels on val set")
-    print("  # → Saves to: results/vlm/SigLIP/SigLIP_classifier_avg_openai.csv")
-    print("  # VLM Embedders:")
-    print("  python exp_launcher.py SigLIP embedder            # Run SigLIP embedder (defaults to val)")
-    print("  # → Saves to: eval/results/embeddings/SigLIP/SigLIP_val.npy")
-    print("  python exp_launcher.py SigLIP embedder train      # Run SigLIP embedder with train dataloader")
-    print("  # → Saves to: eval/results/embeddings/SigLIP/SigLIP_train.npy")
-    print("  python exp_launcher.py DINOv2                      # Run DINOv2 embedder (mode enforced, defaults to val)")
-    print("  # → Saves to: eval/results/embeddings/DINOv2/DINOv2_val.npy")
-    print("  python exp_launcher.py DINOv2 embedder train       # Run DINOv2 embedder with train dataloader")
-    print("  # → Saves to: eval/results/embeddings/DINOv2/DINOv2_train.npy")
-    print("  # EfficientNet Classification:")
-    print("  python exp_launcher.py EfficientNet-L2            # Run EfficientNet-L2 classifier on val set")
-    print("  # → Saves to: results/supervised_models/EfficientNet-L2/EfficientNet-L2.csv")
-    print("  python exp_launcher.py EfficientNet-L2 classifier none none train  # Run EfficientNet-L2 classifier on train set")
-    print("  # → Saves to: results/supervised_models/EfficientNet-L2/EfficientNet-L2_train.csv")
-    print("  python exp_launcher.py EVA-02                      # Run EVA-02 classifier on val set")
-    print("  # → Saves to: results/supervised_models/EVA-02/EVA-02.csv")
-    print("  python exp_launcher.py EVA-02 classifier none none train  # Run EVA-02 classifier on train set")
-    print("  # → Saves to: results/supervised_models/EVA-02/EVA-02_train.csv")
-    print("  # All Templates Evaluation:")
-    print("  python exp_launcher.py SigLIP2 all_templates mod  # Run SigLIP2 in all_templates mode with mod labels")
-    print("  # → Saves to: results/all_templates/SigLIP2/SigLIP2_classifier_all_templates_mod.csv")
-    print("  python exp_launcher.py OpenCLIP all_templates wordnet  # Run OpenCLIP in all_templates mode with WordNet labels")
-    print("  # → Saves to: results/all_templates/OpenCLIP/OpenCLIP_classifier_all_templates_wordnet.csv")
-    print("  # KNN Classification:")
-    print("  python exp_launcher.py knn SigLIP2               # Run KNN with SigLIP2 embeddings (defaults to val)")
-    print("  # → Saves to: eval/results/knn/siglipv2/knn_siglipv2_val.csv")
-    print("  python exp_launcher.py knn SigLIP2 train         # Run KNN with SigLIP2 embeddings on train set")
-    print("  # → Saves to: eval/results/knn/siglipv2/knn_siglipv2_train.csv")
-    print("  python exp_launcher.py knn radio-1024 val        # Run KNN with RADIO-1024 embeddings on val set")
-    print("  # → Saves to: eval/results/knn/radio-1024/knn_radio-1024_val.csv")
-    print("  # Few-shot KNN Classification:")
-    print("  python exp_launcher.py few-shot DINOv2 10        # Run few-shot KNN with DINOv2 embeddings, 10 samples per class")
-    print("  # → Runs 250 iterations (2500/10), saves individual CSVs in eval/results/knn/DINOv2/few-shot/10/")
-    print("  # → Summary with confidence intervals: eval/results/knn/DINOv2/few-shot/10_shot_accuracy_summary.csv")
-    print("  python exp_launcher.py few-shot SigLIP2 20       # Run few-shot KNN with SigLIP2 embeddings, 20 samples per class")
-    print("  # → Runs 125 iterations (2500/20), saves results in eval/results/knn/SigLIP2/few-shot/20/")
-    print("  # → Summary: eval/results/knn/SigLIP2/few-shot/20_shot_accuracy_summary.csv")
-    print("  # K-fold Cross-validation:")
-    print("  python exp_launcher.py SigLIP2 kfold 10 train    # Run 10-fold cross-validation with SigLIP2 embeddings on train split")
-    print("  # → Runs 10 folds, saves individual results in eval/results/kfold/10fold_train/")
-    print("  # → Individual fold files: SigLIP2_10fold_[1-10].csv")
-    print("  python exp_launcher.py DINOv2 kfold 5 val       # Run 5-fold cross-validation with DINOv2 embeddings on val split")
-    print("  # → Runs 5 folds, saves results in eval/results/kfold/5fold_val/")
-    print("  # → Individual fold files: DINOv2_5fold_[1-5].csv")
-    print("  # Combination Model:")
-    print("  python exp_launcher.py SigLIP2 combination       # Run combination model pipeline")
-    print("  # → Calculates VL precision, k-fold precision, then combines models")
-    print("  # → Requires SigLIP2 10-fold k-fold results (run 'python exp_launcher.py SigLIP2 kfold 10 train' first)")
-    print("  # Special cases:")
-    print("  python exp_launcher.py RADIO classifier           # Run RADIO classifier (uses radio config & run_radio_torch.py)")
-    print("  # → Saves to: results/vlm/RADIO/RADIO_classifier_0_mod.csv")
-    print("  python exp_launcher.py RADIO embedder             # Run RADIO embedder (uses radio_embedder config & run_radio.py, defaults to val)")
-    print("  # → Saves to: eval/results/embeddings/RADIO/RADIO_val.npy")
-    print("  python exp_launcher.py RADIO embedder train       # Run RADIO embedder with train dataloader")
-    print("  # → Saves to: eval/results/embeddings/RADIO/RADIO_train.npy")
-    print("  python exp_launcher.py RADIO count_params         # Count parameters for RADIO model (uses radio config & run_radio_torch.py)")
-    print("  python exp_launcher.py CLIP count_params          # Count parameters for CLIP model")
-    print("\nKNN Prerequisites:")
-    print("  Before running KNN, few-shot, or k-fold, you must first generate embeddings using the embedder mode:")
-    print("  python exp_launcher.py SigLIP2 embedder           # Generate val embeddings")
-    print("  python exp_launcher.py SigLIP2 embedder train     # Generate train embeddings")
-    print("  python exp_launcher.py knn SigLIP2 val            # Then run KNN classification")
-    print("  python exp_launcher.py few-shot SigLIP2 10        # Or run few-shot KNN classification")
-    print("  python exp_launcher.py SigLIP2 kfold 10 train     # Or run k-fold cross-validation")
     
-    print("\nCombination Model Prerequisites:")
-    print("  Before running combination model, you must first generate SigLIP2 10-fold k-fold results:")
-    print("  python exp_launcher.py SigLIP2 embedder           # Generate val embeddings (if not done)")
-    print("  python exp_launcher.py SigLIP2 embedder train     # Generate train embeddings (if not done)")
-    print("  python exp_launcher.py SigLIP2 kfold 10 train     # Generate 10-fold k-fold results")
-    print("  python exp_launcher.py SigLIP2 combination        # Then run combination model")
+    print("\n🤖 SUPPORTED MODELS:")
+    print("  • SigLIP      - SigLIP vision-language model")
+    print("  • SigLIP2     - SigLIP-v2 vision-language model")  
+    print("  • CLIP        - OpenAI CLIP model")
+    print("  • OpenCLIP    - OpenCLIP model")
+    print("  • DINOv2      - DINOv2 vision model (embedder mode only)")
+    print("  • EfficientNet-L2   - EfficientNet Large-2 (classifier mode only)")
+    print("  • EfficientNet-V2   - EfficientNet V2 (classifier mode only)")
+    print("  • EVA-02      - EVA-02 vision model (classifier mode only)")
+    print("  • RADIO       - RADIO model (special 3-step classifier pipeline)")
+    
+    print("\n⚙️  AVAILABLE MODES:")
+    print("  📊 classifier     - Run classification on validation/training sets")
+    print("                     Available for: All models except DINOv2")
+    print("                     Special: RADIO runs 3-step pipeline (see details below)")
+    print("  🗂️  embedder       - Generate embeddings for datasets") 
+    print("                     Available for: VLM models (SigLIP, SigLIP2, CLIP, OpenCLIP, DINOv2, RADIO)")
+    print("  📈 all_templates  - Test all available templates at once")
+    print("                     Available for: VLM models (SigLIP, SigLIP2, CLIP, OpenCLIP)")
+    print("  🔢 count_params   - Count model parameters")
+    print("                     Available for: All models")
+    print("  🎯 knn            - K-nearest neighbors classification using pre-computed embeddings")
+    print("  🎲 few-shot       - Few-shot learning with confidence intervals")
+    print("  📊 kfold          - K-fold cross-validation")
+    print("  🔀 combination    - Run combination model pipeline (SigLIP2 only)")
+
+    print("\n🎛️  PARAMETERS:")
+    print("  Templates:")
+    print("    • 0-7         - Individual template indices")
+    print("    • avg         - Average of all templates")
+    print("    • avg_prime   - Modified average template")
+    print("  Labels Options:")
+    print("    • wordnet     - WordNet-based class names")
+    print("    • openai      - OpenAI-style class names") 
+    print("    • mod         - Modified class names")
+    print("  Splits:")
+    print("    • val         - Validation set (default)")
+    print("    • train       - Training set")
+    print("  Dataloaders (embedder mode):")
+    print("    • val         - Validation dataloader (default)")
+    print("    • train       - Training dataloader")
+    print("  Resolution (RADIO only):")
+    print("    • 378         - 378x378 resolution (default)")
+    print("    • 896         - 896x896 resolution")
+
+    print("\n🎯 RADIO CLASSIFIER - SPECIAL 3-STEP PIPELINE:")
+    print("  The RADIO classifier runs a complete 3-step process:")
+    print("  " + "─" * 60)
+    print("  Step 1: 🖼️  Generate RADIO image embeddings")
+    print("          • Uses specified resolution (378 or 896)")
+    print("          • Saves to: eval/results/embeddings/RADIO_{resolution}/")
+    print("  Step 2: 📝 Generate OpenCLIP text embeddings") 
+    print("          • Uses specified template and labels")
+    print("          • Saves to: eval/results/text_embeddings/OpenCLIP/")
+    print("  Step 3: ✖️  Multiply embeddings and evaluate")
+    print("          • Performs element-wise multiplication")
+    print("          • Runs clean label evaluation")
+    print("          • Saves to: eval/results/vlm/RADIO_{resolution}/")
+    print("  " + "─" * 60)
+    print("  ⚡ Features:")
+    print("    • Automatic caching: Re-uses existing embeddings if found")
+    print("    • Progress tracking: Clear status for each step")
+    print("    • Error handling: Stops pipeline if any step fails")
+    print("    • Clean evaluation: Includes accuracy on cleaned labels")
+    
+    print("\n💾 OUTPUT STRUCTURE:")
+    print("  VLM Classifiers:")
+    print("    results/vlm/{model_name}/{model_name}_classifier_{context}_{labels_option}[_train].csv")
+    print("  RADIO Classifiers:")
+    print("    eval/results/vlm/RADIO_{resolution}/RADIO_{resolution}_classifier_{context}_{labels_option}[_train].csv")
+    print("  EfficientNet/EVA-02 Classifiers:")
+    print("    results/supervised_models/{model_name}/{model_name}[_train].csv")
+    print("  Embedders:")
+    print("    eval/results/embeddings/{model_name}/{model_name}_{dataloader}.npy")
+    print("  KNN Classifiers:")
+    print("    eval/results/knn/{embedding_space}/knn_{embedding_space}_{set}.csv")
+    print("  Few-shot KNN:")
+    print("    Individual: eval/results/knn/{embedding_space}/few-shot/{m_sample}/")
+    print("    Summary: eval/results/knn/{embedding_space}/few-shot/{m_sample}_shot_accuracy_summary.csv")
+    print("  K-fold Cross-validation:")
+    print("    eval/results/kfold/{n_folds}fold_{split}/{embedding_space}_{n_folds}fold_[1-{n_folds}].csv")
+    
+    print("\n📚 EXAMPLES:")
+    print("\n  🔸 VLM Classification:")
+    print("    python exp_launcher.py CLIP classifier 0 wordnet")
+    print("    # → Run CLIP with template 0 and WordNet labels on val set")
+    print("    # → Saves to: results/vlm/CLIP/CLIP_classifier_0_wordnet.csv")
+    print()
+    print("    python exp_launcher.py SigLIP2 classifier avg openai train")
+    print("    # → Run SigLIP2 with avg template and OpenAI labels on train set")
+    print("    # → Saves to: results/vlm/SigLIP2/SigLIP2_classifier_avg_openai_train.csv")
+    
+    print("\n  🔸 RADIO Classification (3-Step Pipeline):")
+    print("    python exp_launcher.py RADIO classifier avg wordnet val 896")
+    print("    # → Step 1: Generate RADIO embeddings at 896x896 resolution")
+    print("    # →         Saves to: eval/results/embeddings/RADIO_896/RADIO_896_val.npy")
+    print("    # → Step 2: Generate OpenCLIP text embeddings for avg template + wordnet labels")
+    print("    # →         Saves to: eval/results/text_embeddings/OpenCLIP/OpenCLIP_text_embeddings_avg_wordnet.npy")
+    print("    # → Step 3: Multiply embeddings and evaluate with clean labels")
+    print("    # →         Saves to: eval/results/vlm/RADIO_896/RADIO_896_classifier_avg_wordnet.csv")
+    print()
+    print("    python exp_launcher.py RADIO classifier 0 openai train 378")
+    print("    # → Same 3-step process but with template 0, OpenAI labels, train set, 378 resolution")
+
+    print("\n  🔸 Embedder Mode:")
+    print("    python exp_launcher.py SigLIP embedder")
+    print("    # → Generate SigLIP embeddings for val set")
+    print("    # → Saves to: eval/results/embeddings/SigLIP/SigLIP_val.npy")
+    print()
+    print("    python exp_launcher.py RADIO embedder train")
+    print("    # → Generate RADIO embeddings for train set") 
+    print("    # → Saves to: eval/results/embeddings/RADIO/RADIO_train.npy")
+    print()
+    print("    python exp_launcher.py DINOv2 embedder")
+    print("    # → DINOv2 only supports embedder mode")
+    print("    # → Saves to: eval/results/embeddings/DINOv2/DINOv2_val.npy")
+
+    print("\n  🔸 All Templates Evaluation:")
+    print("    python exp_launcher.py SigLIP2 all_templates mod")
+    print("    # → Test all templates with modified labels")
+    print("    # → Saves to: results/all_templates/SigLIP2/SigLIP2_classifier_all_templates_mod.csv")
+
+    print("\n  🔸 KNN Classification:")
+    print("    python exp_launcher.py knn SigLIP2")
+    print("    # → Run KNN with SigLIP2 embeddings (requires embeddings to exist)")
+    print("    # → Saves to: eval/results/knn/SigLIP2/knn_SigLIP2_val.csv")
+    print()
+    print("    python exp_launcher.py knn RADIO train") 
+    print("    # → Run KNN with RADIO embeddings on train set")
+    print("    # → Saves to: eval/results/knn/RADIO/knn_RADIO_train.csv")
+
+    print("\n  🔸 Few-shot Learning:")
+    print("    python exp_launcher.py few-shot DINOv2 10")
+    print("    # → Run few-shot with 10 samples per class (250 iterations)")
+    print("    # → Individual results: eval/results/knn/DINOv2/few-shot/10/")
+    print("    # → Summary with CI: eval/results/knn/DINOv2/few-shot/10_shot_accuracy_summary.csv")
+
+    print("\n  🔸 K-fold Cross-validation:")
+    print("    python exp_launcher.py SigLIP2 kfold 10 train")
+    print("    # → Run 10-fold cross-validation on train split")
+    print("    # → Saves to: eval/results/kfold/10fold_train/SigLIP2_10fold_[1-10].csv")
+
+    print("\n  🔸 Special Commands:")
+    print("    python exp_launcher.py CLIP count_params")
+    print("    # → Count CLIP model parameters")
+    print()
+    print("    python exp_launcher.py SigLIP2 combination")
+    print("    # → Run combination model pipeline (requires k-fold results)")
+
+    print("\n⚠️  PREREQUISITES:")
+    print("  📋 For KNN/Few-shot/K-fold: First generate embeddings using embedder mode")
+    print("    python exp_launcher.py SigLIP2 embedder           # Generate val embeddings")
+    print("    python exp_launcher.py SigLIP2 embedder train     # Generate train embeddings")
+    print("    python exp_launcher.py knn SigLIP2                # Then run KNN")
+    print()
+    print("  📋 For Combination model: First generate k-fold results")
+    print("    python exp_launcher.py SigLIP2 kfold 10 train     # Generate 10-fold results")
+    print("    python exp_launcher.py SigLIP2 combination        # Then run combination")
+    
+    print("\n" + "=" * 80)
+    print("For more details, check the project documentation or config files in conf/")
+    print("=" * 80)
 
 def main():
     if len(sys.argv) < 2:
+        show_usage()
+        return
+
+    # Check for help arguments
+    if sys.argv[1].lower() in ['-help', '--help', '-h', 'help']:
         show_usage()
         return
 
@@ -987,18 +1217,26 @@ def main():
         return
     
     # Parse parameters based on mode
-    # For classifier: template, labels_option, and split
-    # For all_templates: only labels_option (no template)  
+    # For classifier: template, labels_option, split, and resolution (for RADIO)
+    # For all_templates: only labels_option (no template parameter)
     # For embedder: dataloader (using template position)
     template = None
     labels_option = None
     dataloader = None
     split = None
+    resolution = None
     
     if mode == "classifier":
         template = sys.argv[3] if len(sys.argv) > 3 else None
         labels_option = sys.argv[4] if len(sys.argv) > 4 else None
-        split = sys.argv[5] if len(sys.argv) > 5 else 'val'  # Default to 'val'
+        split = sys.argv[5] if len(sys.argv) > 5 else None
+        # For RADIO classifier, resolution can be specified as 6th parameter
+        if model == 'RADIO' and len(sys.argv) > 6:
+            try:
+                resolution = int(sys.argv[6])
+            except ValueError:
+                print_error(f"Resolution must be an integer, got: {sys.argv[6]}")
+                return
     elif mode == "all_templates":
         # For all_templates mode, labels_option is in position 3 (no template parameter)
         labels_option = sys.argv[3] if len(sys.argv) > 3 else None
@@ -1046,11 +1284,11 @@ def main():
     
     # Special handling for RADIO (different configs and scripts for different modes)
     if model == 'RADIO':
-        config, run_script = handle_radio_model(mode, config, run_script)
-        # RADIO doesn't support labels_option
-        if labels_option:
-            print(f"RADIO doesn't support labels_option, ignoring: {labels_option}")
-            labels_option = None
+        result = handle_radio_model(mode, config, run_script, resolution)
+        if result[0] is None:  # Error in handle_radio_model
+            return
+        config, run_script, validated_resolution = result
+        resolution = validated_resolution  # Use validated resolution
     
     # Validate parameters based on mode
     if mode == "embedder":
@@ -1066,7 +1304,22 @@ def main():
         success = handle_efficientnet_classifier(model, config, run_script, template, labels_option, split)
     elif mode == "classifier":
         # VLM classification
-        if model in ['SigLIP', 'SigLIP2', 'CLIP', 'OpenCLIP', 'RADIO']:
+        if model == 'RADIO':
+            # Use specialized RADIO classifier handler with resolution support
+            # Validate that all required parameters are provided for RADIO
+            if split is None:
+                print_error("RADIO classifier requires split parameter (train/val)")
+                print("Usage: python exp_launcher.py RADIO classifier <template> <labels_option> <split> [resolution]")
+                return
+            if resolution is None:
+                print_error("RADIO classifier requires resolution parameter (378/896)")
+                print("Usage: python exp_launcher.py RADIO classifier <template> <labels_option> <split> <resolution>")
+                return
+            success = handle_radio_classifier(model, template, labels_option, config, run_script, split, resolution)
+        elif model in ['SigLIP', 'SigLIP2', 'CLIP', 'OpenCLIP']:
+            # Provide default split for VLM classifiers if not specified
+            if split is None:
+                split = 'val'  # Default to val for VLM classifiers
             success = handle_vlm_classifier(model, template, labels_option, config, run_script, split)
         else:
             print(f"Classifier mode not supported for {model}")

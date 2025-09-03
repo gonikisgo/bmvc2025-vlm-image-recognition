@@ -41,6 +41,9 @@ class RADIOEmbedder(HFTransformersClassifier):
 
     def on_test_end(self):
         gathered_results = [self.test_results]
+        
+        # For embedder mode, use model name without resolution
+        # The radio.py model is only used for embedder mode
         save_embeddings_to_npy(
             results=gathered_results,
             model_name=self.model_name,

@@ -20,7 +20,9 @@ class EmbsLoader:
     
     def __init__(self, cfg: DictConfig):
         self.embs_space = cfg.test.emb_space
-        self.embeddings_dir = os.path.join("eval", "results", "embeddings", self.embs_space)
+        # Get the project root directory (2 levels up from this file: eval/utils.py -> project_root)
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        self.embeddings_dir = os.path.join(project_root, "eval", "results", "embeddings", self.embs_space)
         print(f'Embedding space: {self.embs_space}')
         print(f'Embeddings directory: {self.embeddings_dir}')
     

@@ -1,6 +1,7 @@
-import sys
 import os
 import time
+import sys
+from pathlib import Path
 
 import hydra
 import numpy as np
@@ -8,75 +9,65 @@ import pandas as pd
 import torch
 from omegaconf import DictConfig
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from eval.utils import EmbsLoader, save_predictions_csv
+# Add the project root to the path using Path
+project_root = Path(__file__).parent.parent.parent
+sys.path.append(str(project_root))
+
+from eval.utils import EmbsLoader, save_predictions_csv, eval_on_clean_labels, save_accuracy_results_csv
 
 
 class Mult:
-    text_embs = {
-        'openai': {'mean7': 'openai_mean_7.npy', 'mean8': 'openai_mean_8.npy'},
-        'mod': {'mean7': 'mod_mean_7.npy', 'mean8': 'mod_mean_8.npy'},
-        'wordnet': {'0': 'wordnet_0.npy'},
-
-        'templ': {'openai_0': 'openai_0.npy',
-                  'mod_0': 'mod_0.npy',
-                  'mod_1': 'mod_1.npy',
-                  'mod_2': 'mod_2.npy',
-                  'mod_3': 'mod_3.npy',
-                  'mod_4': 'mod_4.npy',
-                  'mod_5': 'mod_5.npy',
-                  'mod_6': 'mod_6.npy',
-                  'mod_7': 'mod_7.npy'
-                  },
-
-        'mapping': {'mod_0': 'mod_0.npy',
-                  'mod_1': 'mod_1.npy',
-                  'mod_2': 'mod_2.npy',
-                  'mod_3': 'mod_3.npy',
-                  'mod_4': 'mod_4.npy',
-                  'mod_5': 'mod_5.npy',
-                  'mod_6': 'mod_6.npy',
-                  'mod_7': 'mod_7.npy'
-                  }
-    }
-
     def __init__(self, cfg):
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.text_embeddings = []
-
+        self.cfg = cfg
+        
         self.labels_option = cfg.test.labels_option
         self.context = cfg.test.context
 
-        self.folder = cfg.test.folder
-        self.embs_path = cfg.path.text_embs
+        self.folder = cfg.test.folder  # Should be 'OpenCLIP' for text embeddings
+        self.embs_space = cfg.test.emb_space  # e.g., 'RADIO_378'
+        
+        # Load text embeddings
         self.text_embeddings = self.load_text_embeddings()
-        print(self.text_embeddings.shape)
+        print(f"Text embeddings shape: {self.text_embeddings.shape}")
 
+        # Load image embeddings
         embsLoader = EmbsLoader(cfg)
-
         self.dataloader = cfg.test.dataloader
         if self.dataloader == 'train':
             self.image_embeddings = embsLoader.get_train_embeddings()
-            print(len(np.unique(self.image_embeddings['image_name'])))
-            print("Loading train embeddings")
+            print(f"Loading train embeddings: {len(np.unique(self.image_embeddings['image_name']))} unique images")
         else:
             self.image_embeddings = embsLoader.get_val_embeddings()
             print("Loading val embeddings")
 
-        self.embs_space = cfg.test.emb_space
-
         self.image_embeddings['embedding'] = np.array(self.image_embeddings['embedding']).astype(np.float32)
 
-        print(f'Number of text embeddings: {self.text_embeddings.shape}')
-        print(self.image_embeddings['embedding'].shape)
+        print(f'Image embeddings shape: {self.image_embeddings["embedding"].shape}')
         self.test_results = []
         self.topk = cfg.test.topk
         self.exp_name = f"{cfg.test.exp_name}_{self.embs_space}_{self.dataloader}_{self.labels_option}_{self.context}"
 
     def load_text_embeddings(self):
-        path = os.path.join(self.embs_path, self.folder, self.text_embs[self.labels_option][self.context])
-        print(f'Loading text embeddings from {path}')
-        return torch.tensor(np.load(path), device=self.device, dtype=torch.float32)
+        """Load text embeddings from OpenCLIP text embedder output."""
+        # Build path to text embeddings file
+        text_embeddings_dir = Path(__file__).parent.parent.parent / 'eval' / 'results' / 'text_embeddings' / self.folder
+        filename = f'{self.folder}_text_embeddings_{self.context}_{self.labels_option}.npy'
+        text_embeddings_path = text_embeddings_dir / filename
+        
+        print(f'Loading text embeddings from {text_embeddings_path}')
+        
+        if not text_embeddings_path.exists():
+            raise FileNotFoundError(f"Text embeddings file not found: {text_embeddings_path}")
+        
+        # Load the .npy file which contains a dict with text embeddings
+        data = np.load(text_embeddings_path, allow_pickle=True).item()
+        text_embeddings = data['text_embeddings']
+        
+        print(f"Loaded text embeddings with shape: {text_embeddings.shape}")
+        print(f"Context: {data['context']}, Labels: {data['labels_option']}")
+        
+        return torch.tensor(text_embeddings, device=self.device, dtype=torch.float32)
 
     def load_mapping_embeddings(self):
         self.text_embeddings = []
@@ -122,9 +113,11 @@ class Mult:
         self.test_results.append(outputs)
 
     def on_test_end(self):
+        """Process results, save predictions, and run clean label evaluation."""
         gathered_results = [self.test_results]
         flattened_results = [item for sublist in gathered_results for item in sublist]
 
+        # Prepare prediction data
         data = []
         for output in flattened_results:
             labels, image_names = output['original_labels'], output['image_names']
@@ -141,36 +134,53 @@ class Mult:
                 data.append(row)
 
         print(f"Number of predictions: {len(data)}")
-        save_predictions_csv(pd.DataFrame(data), filename=self.exp_name)
-        print(f"Saved predictions to {self.exp_name}.csv")
+        predictions_df = pd.DataFrame(data)
+        
+        # Save predictions to the VLM results directory with proper naming
+        model_with_resolution = self.embs_space  # e.g., 'RADIO_378'
+        save_dir = Path(__file__).parent.parent.parent / 'eval' / 'results' / 'vlm' / model_with_resolution
+        save_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Create filename following the pattern: model_resolution_classifier_context_labels[_train].csv
+        split_suffix = "_train" if self.dataloader == 'train' else ""
+        filename = f"{model_with_resolution}_classifier_{self.context}_{self.labels_option}{split_suffix}"
+        predictions_path = save_dir / f"{filename}.csv"
+        
+        # Save predictions
+        predictions_df.to_csv(predictions_path, index=False)
+        print(f"✓ Predictions saved to: {predictions_path}")
+        
+        # Run clean label evaluation and save accuracy results
+        try:
+            # Get path to clean validation labels
+            clean_labels_path = self.cfg.path.cleaner_validation
+            
+            if os.path.exists(clean_labels_path):
+                print("\n🔄 Running evaluation on clean labels...")
+                
+                # Use the save_accuracy_results_csv function which handles both validation and clean validation accuracy
+                validation_accuracy, clean_validation_accuracy = save_accuracy_results_csv(
+                    predictions_df=predictions_df,
+                    clean_labels_path=clean_labels_path,
+                    directory=f'results/vlm/{model_with_resolution}',
+                    filename=filename,
+                    verbose=True
+                )
+                
+                print_success = lambda msg: print(f"\033[92m{msg}\033[0m")
+                print_success(f"✓ Validation Accuracy: {validation_accuracy:.2f}%")
+                print_success(f"✓ Clean Validation Accuracy: {clean_validation_accuracy:.2f}%")
+                print_success(f"✓ Accuracy results saved to: {save_dir / f'{filename}_accuracy.csv'}")
+            else:
+                print(f"Warning: Clean validation labels file not found at: {clean_labels_path}")
+                print("Skipping clean label evaluation.")
+                
+        except Exception as e:
+            print(f"Warning: Error during clean label evaluation: {e}")
+            print("Predictions were saved successfully, but accuracy evaluation failed.")
 
+        print(f"\n🎉 Multiplication completed successfully!")
+        print(f"✓ Results saved to: {predictions_path}")
+        
+        return predictions_path
 
-@hydra.main(version_base=None, config_path='../../conf', config_name='base')
-def main(cfg: DictConfig) -> None:
-    start_time = time.time()
-
-    dataloaders = ['train']
-
-    text_embs = {
-        'openai': {'mean7': 'openai_mean_7.npy', 'mean8': 'openai_mean_8.npy'},
-        'mod': {'mean7': 'mod_mean_7.npy', 'mean8': 'mod_mean_8.npy'},
-        'wordnet': {'0': 'wordnet_0.npy'},
-    }
-
-    for dataloader in dataloaders:
-        for labels_option in text_embs.keys():
-            for context in text_embs[labels_option].keys():
-                print(f"Running with dataloader: {dataloader}, labels_option: {labels_option}, context: {context}")
-                cfg.test.dataloader = dataloader
-                cfg.test.labels_option = labels_option
-                cfg.test.context = context
-                mult = Mult(cfg)
-                mult.test_step()
-                print(f"Finished with dataloader: {dataloader}, labels_option: {labels_option}, context: {context}")
-
-    elapsed_time = time.time() - start_time
-    print(f"Elapsed time: {elapsed_time:.2f} seconds.")
-
-
-if __name__ == '__main__':
-    main()

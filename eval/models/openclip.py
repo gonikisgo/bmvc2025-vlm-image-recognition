@@ -168,7 +168,7 @@ class OpenClipTextEmbedder(HFTransformersClassifier):
         # Create save directory and filename
         save_dir = Path(__file__).parent.parent.parent / 'eval' / 'results' / 'text_embeddings' / self.model_name
         save_dir.mkdir(parents=True, exist_ok=True)
-        filename = f'{self.model_name}_text_embeddings_{self.labels_option}_{self.context}.npy'
+        filename = f'{self.model_name}_text_embeddings_{self.context}_{self.labels_option}.npy'
         save_path = save_dir / filename
         
         # Save embeddings

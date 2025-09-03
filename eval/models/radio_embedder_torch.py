@@ -71,11 +71,15 @@ class RADIOTorchEmbedder:
 
         # Print detailed info matching classifier style
         print(f"Processing embeddings: {len(data['label'])} images, {len(data['image_name'])} filenames, embedding shape: {data['embedding'].shape}")
-        # Save to /eval/results/embeddings/{model_name}/ directory structure
-        save_dir = project_root / 'eval' / 'results' / 'embeddings' / self.cfg.test.model
+        
+        # Create model name with resolution for consistent directory and filename structure
+        model_with_resolution = f"{self.cfg.test.model}_{self.cfg.test.resolution}"
+        
+        # Save to /eval/results/embeddings/{model_name}_{resolution}/ directory structure
+        save_dir = project_root / 'eval' / 'results' / 'embeddings' / model_with_resolution
         save_dir.mkdir(parents=True, exist_ok=True)
 
-        save_path = save_dir / f'{self.cfg.test.model}_{self.cfg.test.dataloader}.npy'
+        save_path = save_dir / f'{model_with_resolution}_{self.cfg.test.dataloader}.npy'
         np.save(save_path, data)
         print(f'✓ Embeddings data saved to: {save_path}')
 
