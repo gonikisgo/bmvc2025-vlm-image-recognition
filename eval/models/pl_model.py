@@ -240,13 +240,16 @@ class Classifier(pl.LightningModule):
                     
                     save_directory = f"eval/results/supervised_models/{display_model_name}/"
                     directory_type = "supervised models"
-                    filename = display_model_name  # Use display model name as filename
+                    # Add dataloader prefix for supervised models too
+                    prefix = "_train" if self.cfg.test.get('dataloader', 'val') == 'train' else ""
+                    filename = f"{display_model_name}{prefix}"
                 else:
                     # Create VLM-style filename: model_mode_context_labels
                     context = getattr(self, 'context', self.cfg.test.get('context', '0'))
                     labels_option = getattr(self, 'labels_option', self.cfg.test.get('labels_option', 'mod'))
-                    filename = f"{model_name}_{self.mode}_{context}_{labels_option}"
-                    
+                    prefix = "_train" if self.cfg.test.get('dataloader', 'val') == 'train' else ""
+                    filename = f"{model_name}_{self.mode}_{context}_{labels_option}{prefix}"
+
                     # For all_templates mode, save to all_templates folder instead of vlm folder
                     if context == 'all_templates':
                         save_directory = f"eval/results/all_templates/{model_name}/"

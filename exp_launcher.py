@@ -152,8 +152,8 @@ def run_all_templates_processing(model_name, labels_option='mod', dataloader='va
 # VALIDATION FUNCTIONS
 # ============================================================================
 
-def validate_vlm_classifier_params(template, labels_option):
-    """Validate template and labels_option for VLM classifier mode."""
+def validate_vlm_classifier_params(template, labels_option, split='val'):
+    """Validate template, labels_option, and split for VLM classifier mode."""
     if template:
         valid_templates = ['0', '1', '2', '3', '4', '5', '6', '7', 'avg', 'avg_prime', 'all_templates']
         if template not in valid_templates:
@@ -166,6 +166,13 @@ def validate_vlm_classifier_params(template, labels_option):
         if labels_option not in valid_labels_options:
             print_error(f"Invalid labels_option: {labels_option}")
             print(f"Available labels_options: {', '.join(valid_labels_options)}")
+            return False
+    
+    if split:
+        valid_splits = ['train', 'val']
+        if split not in valid_splits:
+            print_error(f"Invalid split: {split}")
+            print(f"Available splits: {', '.join(valid_splits)}")
             return False
     
     return True
@@ -221,13 +228,20 @@ def validate_knn_params(embedding_space, set_param):
 # VLM CLASSIFICATION HANDLING
 # ============================================================================
 
-def handle_vlm_classifier(model, template, labels_option, config, run_script):
+def handle_vlm_classifier(model, template, labels_option, config, run_script, split='val'):
     """Handle VLM models in classifier mode."""
     print(f"Running {model} in classifier mode")
-    print(f"Results will be saved to: results/vlm/{model}/{model}_classifier_{template or '0'}_{labels_option or 'mod'}")
+    
+    # Create filename suffix based on split
+    split_suffix = "_train" if split == 'train' else ""
+    context = template or '0'
+    labels = labels_option or 'mod'
+    
+    print(f"Split: {split}")
+    print(f"Results will be saved to: results/vlm/{model}/{model}_classifier_{context}_{labels}{split_suffix}")
     
     # Validate parameters
-    if not validate_vlm_classifier_params(template, labels_option):
+    if not validate_vlm_classifier_params(template, labels_option, split):
         return False
     
     # Build command
@@ -244,15 +258,16 @@ def handle_vlm_classifier(model, template, labels_option, config, run_script):
     if labels_option:
         cmd.append(f"test.labels_option={labels_option}")
     
+    # Add split parameter
+    cmd.append(f"test.dataloader={split}")
+    
     print(f"Running command: {' '.join(cmd)}")
     result = subprocess.run(cmd)
     
     if result.returncode == 0:
-        context = template or '0'
-        labels = labels_option or 'mod'
         print_success(f"\n✓ {model} classifier completed successfully!")
-        print(f"✓ Predictions saved to: results/vlm/{model}/{model}_classifier_{context}_{labels}.csv")
-        print(f"✓ Accuracy results saved to: results/vlm/{model}/{model}_classifier_{context}_{labels}_accuracy.csv")
+        print(f"✓ Predictions saved to: results/vlm/{model}/{model}_classifier_{context}_{labels}{split_suffix}.csv")
+        print(f"✓ Accuracy results saved to: results/vlm/{model}/{model}_classifier_{context}_{labels}{split_suffix}_accuracy.csv")
     else:
         print_error(f"\n✗ {model} classifier failed!")
     
@@ -293,10 +308,13 @@ def handle_vlm_embedder(model, config, run_script, dataloader=None):
 # EFFICIENTNET CLASSIFICATION HANDLING
 # ============================================================================
 
-def handle_efficientnet_classifier(model, config, run_script, template, labels_option):
+def handle_efficientnet_classifier(model, config, run_script, template, labels_option, split='val'):
     """Handle EfficientNet models (classifier only)."""
     print(f"Running {model} in classifier mode")
-    print(f"Results will be saved to: results/supervised_models/{model}/{model}")
+    
+    # Add split suffix for filename display
+    split_suffix = "_train" if split == 'train' else ""
+    print(f"Results will be saved to: results/supervised_models/{model}/{model}{split_suffix}")
     
     # EfficientNet models don't support templates or labels_option
     if template:
@@ -304,16 +322,17 @@ def handle_efficientnet_classifier(model, config, run_script, template, labels_o
     if labels_option:
         print_warning(f"EfficientNet models don't support labels_option, ignoring: {labels_option}")
     
-    # Build command
+    # Build command with dataloader parameter
     cmd = [sys.executable, f"eval/run/{run_script}", f"test={config}"]
+    cmd.append(f"test.dataloader={split}")
     
     print(f"Running command: {' '.join(cmd)}")
     result = subprocess.run(cmd)
     
     if result.returncode == 0:
         print_success(f"\n✓ {model} classifier completed successfully!")
-        print(f"✓ Predictions saved to: results/supervised_models/{model}/{model}.csv")
-        print(f"✓ Accuracy results saved to: results/supervised_models/{model}/{model}_accuracy.csv")
+        print(f"✓ Predictions saved to: results/supervised_models/{model}/{model}{split_suffix}.csv")
+        print(f"✓ Accuracy results saved to: results/supervised_models/{model}/{model}{split_suffix}_accuracy.csv")
     else:
         print_error(f"\n✗ {model} classifier failed!")
     
@@ -385,40 +404,28 @@ def handle_few_shot_knn(embedding_space, m_sample, split='val'):
     print(f"Reference set size (m): {m_sample}")
     print(f"Split: {split}")
     
-    # Map model names to actual model names used in file paths
-    model_name_map = {
-        'SigLIP': 'SigLIP',
-        'SigLIP2': 'SigLIP2', 
-        'CLIP': 'CLIP',
-        'OpenCLIP': 'OpenCLIP',
-        'DINOv2': 'DINOv2',
-        'RADIO': 'RADIO'
-    }
-    
-    actual_model_name = model_name_map.get(embedding_space, embedding_space)
-    
     # Check if embedding files exist
     embeddings_base_dir = "eval/results/embeddings"
-    train_embedding_file = f"{embeddings_base_dir}/{actual_model_name}/{actual_model_name}_train.npy"
-    val_embedding_file = f"{embeddings_base_dir}/{actual_model_name}/{actual_model_name}_val.npy"
+    train_embedding_file = f"{embeddings_base_dir}/{embedding_space}/{embedding_space}_train.npy"
+    val_embedding_file = f"{embeddings_base_dir}/{embedding_space}/{embedding_space}_val.npy"
     
     import os
     if not os.path.exists(train_embedding_file):
         print_error(f"Train embedding file not found: {train_embedding_file}")
-        print(f"Please run: python exp_launcher.py {actual_model_name} embedder train")
+        print(f"Please run: python exp_launcher.py {embedding_space} embedder train")
         return False
         
     if not os.path.exists(val_embedding_file):
         print_error(f"Val embedding file not found: {val_embedding_file}")
-        print(f"Please run: python exp_launcher.py {actual_model_name} embedder")
+        print(f"Please run: python exp_launcher.py {embedding_space} embedder")
         return False
     
     # Calculate number of iterations based on 2500/m
     n_iterations = max(1, 2500 // m_sample)
     
     print(f"Will run {n_iterations} iterations (2500/{m_sample})")
-    print(f"Results will be saved to: eval/results/knn/{actual_model_name}/few-shot/{m_sample}/")
-    print(f"Summary will be saved to: eval/results/knn/{actual_model_name}/few-shot/{m_sample}_shot_accuracy_summary.csv")
+    print(f"Results will be saved to: eval/results/knn/{embedding_space}/few-shot/{m_sample}/")
+    print(f"Summary will be saved to: eval/results/knn/{embedding_space}/few-shot/{m_sample}_shot_accuracy_summary.csv")
     
     # Build command
     cmd = [sys.executable, "eval/run/run_knn.py", "test=knn"]
@@ -427,7 +434,7 @@ def handle_few_shot_knn(embedding_space, m_sample, split='val'):
     cmd.append("test.mode=few-shot")
     
     # Override the embedding space
-    cmd.append(f"test.emb_space={actual_model_name}")
+    cmd.append(f"test.emb_space={embedding_space}")
     
     # Add split parameter  
     cmd.append(f"test.split={split}")
@@ -439,7 +446,7 @@ def handle_few_shot_knn(embedding_space, m_sample, split='val'):
     cmd.append(f"test.n_iterations={n_iterations}")
     
     # Update experiment name
-    exp_name = f"knn_{actual_model_name}_few_shot"
+    exp_name = f"knn_{embedding_space}_few_shot"
     cmd.append(f"test.exp_name={exp_name}")
     
     print(f"Running command: {' '.join(cmd)}")
@@ -447,8 +454,8 @@ def handle_few_shot_knn(embedding_space, m_sample, split='val'):
     
     if result.returncode == 0:
         print_success(f"\n✓ Few-shot KNN classifier completed successfully!")
-        print(f"✓ {n_iterations} prediction files saved to: eval/results/knn/{actual_model_name}/few-shot/{m_sample}/")
-        print(f"✓ Accuracy summary with confidence intervals saved to: eval/results/knn/{actual_model_name}/few-shot/{m_sample}_shot_accuracy_summary.csv")
+        print(f"✓ {n_iterations} prediction files saved to: eval/results/knn/{embedding_space}/few-shot/{m_sample}/")
+        print(f"✓ Accuracy summary with confidence intervals saved to: eval/results/knn/{embedding_space}/few-shot/{m_sample}_shot_accuracy_summary.csv")
     else:
         print_error(f"\n✗ Few-shot KNN classifier failed!")
     
@@ -463,38 +470,26 @@ def handle_knn_classifier(embedding_space, set_param):
     
     print(f"Running KNN classifier with {embedding_space} embeddings")
     print(f"Set: {set_param}")
-    
-    # Map model names to actual model names used in file paths (if needed)
-    model_name_map = {
-        'SigLIP': 'SigLIP',
-        'SigLIP2': 'SigLIP2',
-        'CLIP': 'CLIP',
-        'OpenCLIP': 'OpenCLIP',
-        'DINOv2': 'DINOv2',
-        'RADIO': 'RADIO'
-    }
-    
-    # Use direct embedding space names or map from model names
-    actual_model_name = model_name_map.get(embedding_space, embedding_space)
+
     
     # Check if embedding files exist
     embeddings_base_dir = "eval/results/embeddings"
-    train_embedding_file = f"{embeddings_base_dir}/{actual_model_name}/{actual_model_name}_train.npy"
-    val_embedding_file = f"{embeddings_base_dir}/{actual_model_name}/{actual_model_name}_val.npy"
-    
+    train_embedding_file = f"{embeddings_base_dir}/{embedding_space}/{embedding_space}_train.npy"
+    val_embedding_file = f"{embeddings_base_dir}/{embedding_space}/{embedding_space}_val.npy"
+
     import os
     if not os.path.exists(train_embedding_file):
         print_error(f"Train embedding file not found: {train_embedding_file}")
-        print(f"Please run: python exp_launcher.py {actual_model_name} embedder train")
+        print(f"Please run: python exp_launcher.py {embedding_space} embedder train")
         return False
         
     if not os.path.exists(val_embedding_file):
         print_error(f"Val embedding file not found: {val_embedding_file}")
-        print(f"Please run: python exp_launcher.py {actual_model_name} embedder")
+        print(f"Please run: python exp_launcher.py {embedding_space} embedder")
         return False
-    
-    print(f"Results will be saved to: eval/results/knn/{actual_model_name}/knn_{actual_model_name}_{set_param}.csv")
-    
+
+    print(f"Results will be saved to: eval/results/knn/{embedding_space}/knn_{embedding_space}_{set_param}.csv")
+
     # Validate parameters
     if not validate_knn_params(embedding_space, set_param):
         return False
@@ -503,13 +498,13 @@ def handle_knn_classifier(embedding_space, set_param):
     cmd = [sys.executable, "eval/run/run_knn.py", "test=knn"]
     
     # Override the embedding space to use the actual model name
-    cmd.append(f"test.emb_space={actual_model_name}")
+    cmd.append(f"test.emb_space={embedding_space}")
     
     # Add set parameter  
     cmd.append(f"test.split={set_param}")
     
     # Update experiment name to include parameters
-    exp_name = f"knn_{actual_model_name}_{set_param}"
+    exp_name = f"knn_{embedding_space}_{set_param}"
     cmd.append(f"test.exp_name={exp_name}")
     
     print(f"Running command: {' '.join(cmd)}")
@@ -517,8 +512,8 @@ def handle_knn_classifier(embedding_space, set_param):
     
     if result.returncode == 0:
         print_success(f"\n✓ KNN classifier completed successfully!")
-        print(f"✓ Predictions saved to: eval/results/knn/{actual_model_name}/{exp_name}.csv")
-        print(f"✓ Accuracy results saved to: eval/results/knn/{actual_model_name}/{exp_name}_accuracy.csv")
+        print(f"✓ Predictions saved to: eval/results/knn/{embedding_space}/{exp_name}.csv")
+        print(f"✓ Accuracy results saved to: eval/results/knn/{embedding_space}/{exp_name}_accuracy.csv")
     else:
         print_error(f"\n✗ KNN classifier failed!")
     
@@ -650,7 +645,7 @@ def handle_combination_model():
 def show_usage():
     """Display usage information."""
     print("Usage:")
-    print("  python exp_launcher.py <model_name> classifier [template] [labels_option]")
+    print("  python exp_launcher.py <model_name> classifier [template] [labels_option] [split]")
     print("  python exp_launcher.py <model_name> all_templates [labels_option]") 
     print("  python exp_launcher.py <model_name> embedder [dataloader]")
     print("  python exp_launcher.py <model_name> count_params")
@@ -662,6 +657,9 @@ def show_usage():
     print("Templates: 0-7, avg, avg_prime (only for classifier mode of VLM models)")
     print("Dataloaders: train, val (only for embedder mode, defaults to 'val')")
     print("Labels Options: wordnet, openai, mod (only for VLM models, ignored for EfficientNet and RADIO)")
+    print("Splits: train, val (only for classifier mode of VLM models, defaults to 'val')")
+    print("  - val: classify validation set (default)")
+    print("  - train: classify training set (adds '_train' suffix to output files)")
     print("Embedding Spaces (for KNN): SigLIP, SigLIP2, CLIP, OpenCLIP, DINOv2, RADIO")
     print("KNN Sets: train, val (defaults to 'val')")
     print("  - val: classify validation set using training set as neighbors")
@@ -670,17 +668,19 @@ def show_usage():
     print("  - Number of iterations automatically calculated as 2500/m_sample")
     print("  - Only supports val split (classify val set using sampled train neighbors)")
     print("\nOutput Structure:")
-    print("  VLM Classifiers: Results saved to results/vlm/{model_name}/{model_name}_classifier_{context}_{labels_option}.csv")
-    print("  EfficientNet and EVA-02 Classifiers: Results saved to results/supervised_models/{model_name}/{model_name}.csv")
+    print("  VLM Classifiers: Results saved to results/vlm/{model_name}/{model_name}_classifier_{context}_{labels_option}[_train].csv")
+    print("  EfficientNet and EVA-02 Classifiers: Results saved to results/supervised_models/{model_name}/{model_name}[_train].csv")
     print("  Embedders: Results saved to eval/results/embeddings/{model_name}/{model_name}_{dataloader}.npy")
     print("  KNN Classifiers: Results saved to eval/results/knn/{embedding_space}/knn_{embedding_space}_{set}.csv")
     print("  Few-shot KNN: Individual CSVs in eval/results/knn/{embedding_space}/few-shot/{m_sample}/")
     print("               Summary with CI in eval/results/knn/{embedding_space}/few-shot/{m_sample}_shot_accuracy_summary.csv")
     print("\nExamples:")
     print("  # VLM Classification:")
-    print("  python exp_launcher.py CLIP classifier 0 wordnet  # Run CLIP classifier with template 0 and WordNet labels")
+    print("  python exp_launcher.py CLIP classifier 0 wordnet  # Run CLIP classifier with template 0 and WordNet labels on val set")
     print("  # → Saves to: results/vlm/CLIP/CLIP_classifier_0_wordnet.csv")
-    print("  python exp_launcher.py SigLIP classifier avg openai  # Run SigLIP classifier with avg template and OpenAI labels")
+    print("  python exp_launcher.py CLIP classifier 0 wordnet train  # Run CLIP classifier on train set")
+    print("  # → Saves to: results/vlm/CLIP/CLIP_classifier_0_wordnet_train.csv")
+    print("  python exp_launcher.py SigLIP classifier avg openai  # Run SigLIP classifier with avg template and OpenAI labels on val set")
     print("  # → Saves to: results/vlm/SigLIP/SigLIP_classifier_avg_openai.csv")
     print("  # VLM Embedders:")
     print("  python exp_launcher.py SigLIP embedder            # Run SigLIP embedder (defaults to val)")
@@ -692,10 +692,14 @@ def show_usage():
     print("  python exp_launcher.py DINOv2 embedder train       # Run DINOv2 embedder with train dataloader")
     print("  # → Saves to: eval/results/embeddings/DINOv2/DINOv2_train.npy")
     print("  # EfficientNet Classification:")
-    print("  python exp_launcher.py EfficientNet-L2            # Run EfficientNet-L2 classifier")
+    print("  python exp_launcher.py EfficientNet-L2            # Run EfficientNet-L2 classifier on val set")
     print("  # → Saves to: results/supervised_models/EfficientNet-L2/EfficientNet-L2.csv")
-    print("  python exp_launcher.py EVA-02                      # Run EVA-02 classifier")
+    print("  python exp_launcher.py EfficientNet-L2 classifier none none train  # Run EfficientNet-L2 classifier on train set")
+    print("  # → Saves to: results/supervised_models/EfficientNet-L2/EfficientNet-L2_train.csv")
+    print("  python exp_launcher.py EVA-02                      # Run EVA-02 classifier on val set")
     print("  # → Saves to: results/supervised_models/EVA-02/EVA-02.csv")
+    print("  python exp_launcher.py EVA-02 classifier none none train  # Run EVA-02 classifier on train set")
+    print("  # → Saves to: results/supervised_models/EVA-02/EVA-02_train.csv")
     print("  # All Templates Evaluation:")
     print("  python exp_launcher.py SigLIP2 all_templates mod  # Run SigLIP2 in all_templates mode with mod labels")
     print("  # → Saves to: results/all_templates/SigLIP2/SigLIP2_classifier_all_templates_mod.csv")
@@ -798,16 +802,18 @@ def main():
         return
     
     # Parse parameters based on mode
-    # For classifier: template and labels_option
+    # For classifier: template, labels_option, and split
     # For all_templates: only labels_option (no template)  
     # For embedder: dataloader (using template position)
     template = None
     labels_option = None
     dataloader = None
+    split = None
     
     if mode == "classifier":
         template = sys.argv[3] if len(sys.argv) > 3 else None
         labels_option = sys.argv[4] if len(sys.argv) > 4 else None
+        split = sys.argv[5] if len(sys.argv) > 5 else 'val'  # Default to 'val'
     elif mode == "all_templates":
         # For all_templates mode, labels_option is in position 3 (no template parameter)
         labels_option = sys.argv[3] if len(sys.argv) > 3 else None
@@ -872,11 +878,11 @@ def main():
         if mode != "classifier":
             print(f"{model} models only support classifier mode, ignoring mode: {mode}")
             return
-        success = handle_efficientnet_classifier(model, config, run_script, template, labels_option)
+        success = handle_efficientnet_classifier(model, config, run_script, template, labels_option, split)
     elif mode == "classifier":
         # VLM classification
         if model in ['SigLIP', 'SigLIP2', 'CLIP', 'OpenCLIP', 'RADIO']:
-            success = handle_vlm_classifier(model, template, labels_option, config, run_script)
+            success = handle_vlm_classifier(model, template, labels_option, config, run_script, split)
         else:
             print(f"Classifier mode not supported for {model}")
     elif mode == "embedder":
