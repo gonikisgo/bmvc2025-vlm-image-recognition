@@ -85,7 +85,7 @@ def save_predictions_csv(data: pd.DataFrame, directory: str = 'results', filenam
     data.to_csv(output_path, index=False)
 
 
-def eval_on_clean_labels(df, clean_labels):
+def eval_on_clean_labels(df, clean_labels, verbose=True):
     merged = pd.merge(clean_labels, df, left_on='id', right_on='img_id')
     merged['top_1_pred'] = merged['top_1_pred'].astype(str)
 
@@ -98,11 +98,12 @@ def eval_on_clean_labels(df, clean_labels):
 
     merged['correct_orig'] = merged['top_1_pred'] == merged['original_label_x']
 
-    print("Accuracy on 'clean' labels: ", np.round(merged['correct_new'].mean() * 100, 2))
+    if verbose:
+        print("Accuracy on 'clean' labels: ", np.round(merged['correct_new'].mean() * 100, 2))
     return merged
 
 
-def save_accuracy_results_csv(predictions_df: pd.DataFrame, clean_labels_path: str, directory: str = 'results', filename: str = 'out', project_root=None):
+def save_accuracy_results_csv(predictions_df: pd.DataFrame, clean_labels_path: str, directory: str = 'results', filename: str = 'out', project_root=None, verbose=True):
     """
     Saves accuracy results to CSV files including validation accuracy and clean validation accuracy.
     
@@ -112,6 +113,7 @@ def save_accuracy_results_csv(predictions_df: pd.DataFrame, clean_labels_path: s
         directory (str): Directory to save the CSV files (relative to eval/ folder)
         filename (str): Base filename for the CSV files
         project_root: Path to project root. If None, will be inferred from this file's location
+        verbose: Whether to print verbose output (default: True)
     """
     try:
         if project_root is None:
@@ -129,7 +131,7 @@ def save_accuracy_results_csv(predictions_df: pd.DataFrame, clean_labels_path: s
         
         # Calculate clean validation accuracy
         try:
-            clean_results = eval_on_clean_labels(predictions_df, clean_labels)
+            clean_results = eval_on_clean_labels(predictions_df, clean_labels, verbose=verbose)
             clean_validation_accuracy = clean_results['correct_new'].mean() * 100
         except Exception as e:
             print(f"Warning: Could not calculate clean validation accuracy: {e}")
@@ -153,7 +155,8 @@ def save_accuracy_results_csv(predictions_df: pd.DataFrame, clean_labels_path: s
         save_dir.mkdir(parents=True, exist_ok=True)
         accuracy_output_path = save_dir / f'{filename}_accuracy.csv'
         accuracy_df.to_csv(accuracy_output_path, index=False)
-        print(f'Accuracy results saved to: {accuracy_output_path}')
+        if verbose:
+            print(f'Accuracy results saved to: {accuracy_output_path}')
         
         return validation_accuracy, clean_validation_accuracy
         

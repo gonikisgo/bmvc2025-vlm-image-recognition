@@ -193,47 +193,68 @@ class KNNClassifier:
         self.is_data_loaded = True
 
     def __load_data(self):
-        if self.cfg.test.split == 'val':
-            # Default: use train embeddings to fit KNN, classify val embeddings
-            self.embeddings_d = self.embs_loader.get_train_embeddings()
-            self.val_embeddings_d = self.embs_loader.get_val_embeddings()
-        elif self.cfg.test.split == 'train':
-            # Reverse: use val embeddings to fit KNN, classify train embeddings
-            self.embeddings_d = self.embs_loader.get_val_embeddings()
-            self.val_embeddings_d = self.embs_loader.get_train_embeddings()
+        if self.mode == 'kfold':
+            # For k-fold, load only the specified split data for cross-validation
+            if self.cfg.test.split == 'train':
+                self.embeddings_d = self.embs_loader.get_train_embeddings()
+                print(f"Loaded {len(self.embeddings_d['label'])} train embeddings for k-fold cross-validation")
+            elif self.cfg.test.split == 'val':
+                self.embeddings_d = self.embs_loader.get_val_embeddings()
+                print(f"Loaded {len(self.embeddings_d['label'])} val embeddings for k-fold cross-validation")
+            else:
+                raise ValueError(f"Unsupported split for k-fold: {self.cfg.test.split}. Use 'train' or 'val'.")
+            
+            # Convert to numpy arrays for consistent indexing
+            self.embeddings_d['embedding'] = np.array(self.embeddings_d['embedding'])
+            self.embeddings_d['label'] = np.array(self.embeddings_d['label'])
+            self.embeddings_d['image_name'] = np.array(self.embeddings_d['image_name'])
+            
+            # For k-fold, val_embeddings_d will be set during fold splitting
+            self.val_embeddings_d = None
+            
         else:
-            raise ValueError(f"Unsupported split: {self.cfg.test.split}. Use 'train' or 'val'.")
+            # Standard KNN and few-shot modes
+            if self.cfg.test.split == 'val':
+                # Default: use train embeddings to fit KNN, classify val embeddings
+                self.embeddings_d = self.embs_loader.get_train_embeddings()
+                self.val_embeddings_d = self.embs_loader.get_val_embeddings()
+            elif self.cfg.test.split == 'train':
+                # Reverse: use val embeddings to fit KNN, classify train embeddings
+                self.embeddings_d = self.embs_loader.get_val_embeddings()
+                self.val_embeddings_d = self.embs_loader.get_train_embeddings()
+            else:
+                raise ValueError(f"Unsupported split: {self.cfg.test.split}. Use 'train' or 'val'.")
 
-        self.embeddings_d['embedding'] = np.array(self.embeddings_d['embedding'])
-        self.val_embeddings_d['embedding'] = np.array(self.val_embeddings_d['embedding'])
-        
-        # Also convert labels and image_names to numpy arrays for consistent indexing
-        self.embeddings_d['label'] = np.array(self.embeddings_d['label'])
-        self.embeddings_d['image_name'] = np.array(self.embeddings_d['image_name'])
-        self.val_embeddings_d['label'] = np.array(self.val_embeddings_d['label'])
-        self.val_embeddings_d['image_name'] = np.array(self.val_embeddings_d['image_name'])
+            self.embeddings_d['embedding'] = np.array(self.embeddings_d['embedding'])
+            self.val_embeddings_d['embedding'] = np.array(self.val_embeddings_d['embedding'])
+            
+            # Also convert labels and image_names to numpy arrays for consistent indexing
+            self.embeddings_d['label'] = np.array(self.embeddings_d['label'])
+            self.embeddings_d['image_name'] = np.array(self.embeddings_d['image_name'])
+            self.val_embeddings_d['label'] = np.array(self.val_embeddings_d['label'])
+            self.val_embeddings_d['image_name'] = np.array(self.val_embeddings_d['image_name'])
 
-        print(f"Loaded {len(self.val_embeddings_d['label'])} embeddings to classify")
-        print(f"Loaded {len(self.embeddings_d['label'])} embeddings for KNN neighbors")
+            print(f"Loaded {len(self.val_embeddings_d['label'])} embeddings to classify")
+            print(f"Loaded {len(self.embeddings_d['label'])} embeddings for KNN neighbors")
 
-        if self.mode == 'few-shot':
-            self.__sample_train_embs()
-        else:
-            print('Default sampling: using all neighbor embeddings')
-            for key in ['label', 'image_name', 'embedding']:
-                if self.lower_bound > self.upper_bound:
-                    raise ValueError(
-                        f"Invalid bounds: lower_bound ({self.lower_bound}) is greater than upper_bound ({self.upper_bound})")
+            if self.mode == 'few-shot':
+                self.__sample_train_embs()
+            else:
+                print('Default sampling: using all neighbor embeddings')
+                for key in ['label', 'image_name', 'embedding']:
+                    if self.lower_bound > self.upper_bound:
+                        raise ValueError(
+                            f"Invalid bounds: lower_bound ({self.lower_bound}) is greater than upper_bound ({self.upper_bound})")
 
-                if self.upper_bound > len(self.val_embeddings_d[key]):
-                    self.upper_bound = len(self.val_embeddings_d[key]) + 1
-                self.val_embeddings_d[key] = self.val_embeddings_d[key][self.lower_bound:self.upper_bound]
-                print(f'Loaded {len(self.val_embeddings_d[key])} {key} embeddings to classify')
+                    if self.upper_bound > len(self.val_embeddings_d[key]):
+                        self.upper_bound = len(self.val_embeddings_d[key]) + 1
+                    self.val_embeddings_d[key] = self.val_embeddings_d[key][self.lower_bound:self.upper_bound]
+                    print(f'Loaded {len(self.val_embeddings_d[key])} {key} embeddings to classify')
 
-            self.embeddings = self.embeddings_d['embedding']
-            self.val_embeddings = self.val_embeddings_d['embedding']
+                self.embeddings = self.embeddings_d['embedding']
+                self.val_embeddings = self.val_embeddings_d['embedding']
 
-            self.is_data_loaded = True
+                self.is_data_loaded = True
 
     def __save_results(self, itt):
         if len(self.results) != 0:
@@ -241,8 +262,8 @@ class KNNClassifier:
                 path = os.path.join('eval', 'results', 'knn', self.cfg.test.emb_space, 'few-shot', str(self.m_sample))
                 filename = f'{self.exp_name}_{self.cfg.test.split}_{self.m_sample}_{itt}'
             elif self.mode == 'kfold':
-                path = os.path.join('eval', 'results', 'knn', self.cfg.test.emb_space, 'kfold', str(self.kfold))
-                filename = f'{self.exp_name}_{self.cfg.test.split}_{self.kfold}_{itt}'
+                path = os.path.join('eval', 'results', 'kfold', f'{self.kfold}fold_{self.cfg.test.split}')
+                filename = f'{self.cfg.test.emb_space}_{self.kfold}fold_{itt}'
             else:
                 path = os.path.join('eval', 'results', 'knn', self.cfg.test.emb_space)
                 filename = f'{self.exp_name}'
@@ -314,7 +335,8 @@ class KNNClassifier:
             skf = StratifiedKFold(n_splits=self.kfold, shuffle=True, random_state=self.seed)
 
             for fold_idx, (train_index, val_index) in enumerate(skf.split(X, y)):
-                if fold_idx != self.folder:
+                # If folder is set to -1, run all folds; otherwise run only the specified fold
+                if self.folder != -1 and fold_idx != self.folder:
                     continue
 
                 print(f"\n--- Fold {fold_idx + 1}/{self.kfold} ---")
