@@ -224,6 +224,46 @@ def validate_knn_params(embedding_space, set_param):
     
     return True
 
+def validate_kfold_params(embedding_space, n_folds, split):
+    """Validate parameters for k-fold mode."""
+    if embedding_space:
+        # Map model names to embedding space names used in the system
+        valid_embedding_spaces = {
+            'SigLIP': 'SigLIP',
+            'SigLIP2': 'SigLIP2',  
+            'CLIP': 'CLIP',
+            'OpenCLIP': 'OpenCLIP',
+            'DINOv2': 'DINOv2',
+            'RADIO': 'RADIO'
+        }
+        
+        # Allow both model names and direct embedding space names
+        all_valid = list(valid_embedding_spaces.keys()) + list(valid_embedding_spaces.values())
+        
+        if embedding_space not in all_valid:
+            print_error(f"Invalid embedding_space: {embedding_space}")
+            print(f"Available embedding spaces: {', '.join(all_valid)}")
+            return False
+    
+    if n_folds:
+        try:
+            n_folds_int = int(n_folds)
+            if n_folds_int < 2:
+                print_error(f"Number of folds must be at least 2, got: {n_folds}")
+                return False
+        except ValueError:
+            print_error(f"Number of folds must be an integer, got: {n_folds}")
+            return False
+    
+    if split:
+        valid_splits = ['train', 'val']
+        if split not in valid_splits:
+            print_error(f"Invalid split: {split}")
+            print(f"Available splits: {', '.join(valid_splits)}")
+            return False
+    
+    return True
+
 # ============================================================================
 # VLM CLASSIFICATION HANDLING
 # ============================================================================
@@ -520,6 +560,75 @@ def handle_knn_classifier(embedding_space, set_param):
     return result.returncode == 0
 
 # ============================================================================
+# K-FOLD VALIDATION HANDLING
+# ============================================================================
+
+def handle_kfold_validation(embedding_space, n_folds, split):
+    """Handle k-fold cross-validation using precomputed embeddings."""
+    # Set default values
+    embedding_space = embedding_space or 'SigLIP2'
+    n_folds = int(n_folds) if n_folds else 5
+    split = split or 'train'  # Default to train split for k-fold
+    
+    print(f"Running k-fold cross-validation with {embedding_space} embeddings")
+    print(f"Number of folds: {n_folds}")
+    print(f"Split: {split}")
+    
+    actual_model_name = embedding_space
+    
+    # Check if embedding files exist
+    embeddings_base_dir = "eval/results/embeddings"
+    embedding_file = f"{embeddings_base_dir}/{actual_model_name}/{actual_model_name}_{split}.npy"
+    
+    import os
+    if not os.path.exists(embedding_file):
+        print_error(f"Embedding file not found: {embedding_file}")
+        print(f"Please run: python exp_launcher.py {actual_model_name} embedder train")
+        return False
+    
+    # Validate parameters
+    if not validate_kfold_params(embedding_space, n_folds, split):
+        return False
+    
+    print(f"Results will be saved to: eval/results/kfold/{n_folds}fold_{split}/")
+    print(f"KNN classifier will handle all {n_folds} folds internally...")
+    
+    # Build command - KNN classifier handles all folds internally
+    cmd = [sys.executable, "eval/run/run_knn.py", "test=knn"]
+    
+    # Set k-fold mode
+    cmd.append("test.mode=kfold")
+
+    # Override the embedding space
+    cmd.append(f"test.emb_space={actual_model_name}")
+    
+    # Add split parameter
+    cmd.append(f"test.split={split}")
+    
+    # Add k-fold parameters
+    cmd.append(f"test.kfold={n_folds}")
+    # Set folder=-1 to run all folds (modified KNN classifier behavior)
+    cmd.append("test.folder=-1")
+
+    # Update experiment name
+    exp_name = f"kfold_{actual_model_name}"
+    cmd.append(f"test.exp_name={exp_name}")
+    
+    print(f"Running command: {' '.join(cmd)}")
+    result = subprocess.run(cmd)
+    
+    if result.returncode == 0:
+        print_success(f"\n🎉 K-fold cross-validation completed successfully!")
+        print(f"✓ All {n_folds} folds completed successfully")
+        print(f"✓ Results saved to: eval/results/kfold/{n_folds}fold_{split}/")
+        print(f"✓ Individual fold results: {actual_model_name}_{n_folds}fold_[1-{n_folds}].csv")
+    else:
+        print_error(f"\n❌ K-fold cross-validation failed!")
+        print("Check the output above for error details.")
+    
+    return result.returncode == 0
+
+# ============================================================================
 # SPECIAL MODEL HANDLING
 # ============================================================================
 
@@ -558,7 +667,7 @@ def handle_combination_model():
     print("Running combination model pipeline...")
     print("This will execute three scripts in sequence:")
     print("1. eval/expts/vlm/calc_vl_cls_precision.py")
-    print("2. eval/expts/kfold/calc_v_cls_precision.py") 
+    print("2. eval/expts/kfold/calc_v_cls_precision.py (requires SigLIP2 10-fold k-fold results)")
     print("3. eval/expts/vlm/SigLIP2/combination_model.py")
     print("=" * 70)
     
@@ -580,6 +689,39 @@ def handle_combination_model():
         if result1.stdout.strip():
             print("Output:", result1.stdout)
         success = False
+    
+    # Check for 10-fold k-fold results before Step 2
+    if success:
+        print("\n🔄 Checking for SigLIP2 10-fold k-fold results...")
+        
+        # Check if 10-fold results exist for SigLIP2
+        import os
+        kfold_dir = "eval/results/kfold/10fold_train"
+        required_files = [f"SigLIP2_10fold_{i}.csv" for i in range(1, 11)]
+        missing_files = []
+        
+        for file in required_files:
+            file_path = os.path.join(kfold_dir, file)
+            if not os.path.exists(file_path):
+                missing_files.append(file_path)
+        
+        if missing_files:
+            print_error("✗ Missing required 10-fold k-fold results for SigLIP2!")
+            print_error(f"Missing files: {len(missing_files)}/10")
+            print("Missing files:")
+            for file in missing_files[:5]:  # Show first 5 missing files
+                print(f"  - {file}")
+            if len(missing_files) > 5:
+                print(f"  ... and {len(missing_files) - 5} more files")
+            
+            print("\n" + "🔧" + " To generate the required 10-fold k-fold results, run:")
+            print_warning("  python exp_launcher.py SigLIP2 kfold 10 train")
+            print("\nThis will generate all 10 fold files needed for the combination model.")
+            print("Then re-run the combination model:")
+            print_warning("  python exp_launcher.py SigLIP2 combination")
+            return False
+        else:
+            print_success("✓ All required 10-fold k-fold results found for SigLIP2!")
     
     # Step 2: Run k-fold precision calculation (from eval/expts/kfold directory)
     if success:
@@ -651,9 +793,10 @@ def show_usage():
     print("  python exp_launcher.py <model_name> count_params")
     print("  python exp_launcher.py knn <embedding_space> [set]")
     print("  python exp_launcher.py few-shot <embedding_space> <m_sample>")
+    print("  python exp_launcher.py <embedding_space> kfold <n_folds> <split>")
     print("  python exp_launcher.py <model_name> combination")
     print("Models: SigLIP, SigLIP2, CLIP, OpenCLIP, DINOv2, EfficientNet-L2, EfficientNet-V2, RADIO")
-    print("Modes: classifier (default), embedder (not available for EfficientNet, DINOv2 only), count_params, all_templates, knn, few-shot, combination")
+    print("Modes: classifier (default), embedder (not available for EfficientNet, DINOv2 only), count_params, all_templates, knn, few-shot, kfold, combination")
     print("Templates: 0-7, avg, avg_prime (only for classifier mode of VLM models)")
     print("Dataloaders: train, val (only for embedder mode, defaults to 'val')")
     print("Labels Options: wordnet, openai, mod (only for VLM models, ignored for EfficientNet and RADIO)")
@@ -667,6 +810,9 @@ def show_usage():
     print("Few-shot m_sample: Integer representing reference set size per class (e.g., 10, 20, 50)")
     print("  - Number of iterations automatically calculated as 2500/m_sample")
     print("  - Only supports val split (classify val set using sampled train neighbors)")
+    print("K-fold n_folds: Integer representing number of folds for cross-validation (e.g., 5, 10)")
+    print("  - Performs stratified k-fold cross-validation on the specified split")
+    print("  - Supports both train and val splits")
     print("\nOutput Structure:")
     print("  VLM Classifiers: Results saved to results/vlm/{model_name}/{model_name}_classifier_{context}_{labels_option}[_train].csv")
     print("  EfficientNet and EVA-02 Classifiers: Results saved to results/supervised_models/{model_name}/{model_name}[_train].csv")
@@ -674,6 +820,8 @@ def show_usage():
     print("  KNN Classifiers: Results saved to eval/results/knn/{embedding_space}/knn_{embedding_space}_{set}.csv")
     print("  Few-shot KNN: Individual CSVs in eval/results/knn/{embedding_space}/few-shot/{m_sample}/")
     print("               Summary with CI in eval/results/knn/{embedding_space}/few-shot/{m_sample}_shot_accuracy_summary.csv")
+    print("  K-fold Cross-validation: Results saved to eval/results/kfold/{n_folds}fold_{split}/")
+    print("                          Individual fold results: {embedding_space}_{n_folds}fold_[1-{n_folds}].csv")
     print("\nExamples:")
     print("  # VLM Classification:")
     print("  python exp_launcher.py CLIP classifier 0 wordnet  # Run CLIP classifier with template 0 and WordNet labels on val set")
@@ -719,9 +867,17 @@ def show_usage():
     print("  python exp_launcher.py few-shot SigLIP2 20       # Run few-shot KNN with SigLIP2 embeddings, 20 samples per class")
     print("  # → Runs 125 iterations (2500/20), saves results in eval/results/knn/SigLIP2/few-shot/20/")
     print("  # → Summary: eval/results/knn/SigLIP2/few-shot/20_shot_accuracy_summary.csv")
+    print("  # K-fold Cross-validation:")
+    print("  python exp_launcher.py SigLIP2 kfold 10 train    # Run 10-fold cross-validation with SigLIP2 embeddings on train split")
+    print("  # → Runs 10 folds, saves individual results in eval/results/kfold/10fold_train/")
+    print("  # → Individual fold files: SigLIP2_10fold_[1-10].csv")
+    print("  python exp_launcher.py DINOv2 kfold 5 val       # Run 5-fold cross-validation with DINOv2 embeddings on val split")
+    print("  # → Runs 5 folds, saves results in eval/results/kfold/5fold_val/")
+    print("  # → Individual fold files: DINOv2_5fold_[1-5].csv")
     print("  # Combination Model:")
     print("  python exp_launcher.py SigLIP2 combination       # Run combination model pipeline")
     print("  # → Calculates VL precision, k-fold precision, then combines models")
+    print("  # → Requires SigLIP2 10-fold k-fold results (run 'python exp_launcher.py SigLIP2 kfold 10 train' first)")
     print("  # Special cases:")
     print("  python exp_launcher.py RADIO classifier           # Run RADIO classifier (uses radio config & run_radio_torch.py)")
     print("  # → Saves to: results/vlm/RADIO/RADIO_classifier_0_mod.csv")
@@ -732,11 +888,19 @@ def show_usage():
     print("  python exp_launcher.py RADIO count_params         # Count parameters for RADIO model (uses radio config & run_radio_torch.py)")
     print("  python exp_launcher.py CLIP count_params          # Count parameters for CLIP model")
     print("\nKNN Prerequisites:")
-    print("  Before running KNN or few-shot, you must first generate embeddings using the embedder mode:")
+    print("  Before running KNN, few-shot, or k-fold, you must first generate embeddings using the embedder mode:")
     print("  python exp_launcher.py SigLIP2 embedder           # Generate val embeddings")
     print("  python exp_launcher.py SigLIP2 embedder train     # Generate train embeddings")
     print("  python exp_launcher.py knn SigLIP2 val            # Then run KNN classification")
     print("  python exp_launcher.py few-shot SigLIP2 10        # Or run few-shot KNN classification")
+    print("  python exp_launcher.py SigLIP2 kfold 10 train     # Or run k-fold cross-validation")
+    
+    print("\nCombination Model Prerequisites:")
+    print("  Before running combination model, you must first generate SigLIP2 10-fold k-fold results:")
+    print("  python exp_launcher.py SigLIP2 embedder           # Generate val embeddings (if not done)")
+    print("  python exp_launcher.py SigLIP2 embedder train     # Generate train embeddings (if not done)")
+    print("  python exp_launcher.py SigLIP2 kfold 10 train     # Generate 10-fold k-fold results")
+    print("  python exp_launcher.py SigLIP2 combination        # Then run combination model")
 
 def main():
     if len(sys.argv) < 2:
@@ -780,6 +944,27 @@ def main():
         success = handle_few_shot_knn(embedding_space, m_sample, split)
         if not success:
             print_error("Failed to run few-shot KNN classifier")
+        return
+    
+    # Handle k-fold mode specially
+    if len(sys.argv) > 2 and sys.argv[2].lower() == 'kfold':
+        if len(sys.argv) < 5:
+            print_error("K-fold mode requires: python exp_launcher.py <embedding_space> kfold <n_folds> <split>")
+            show_usage()
+            return
+        
+        embedding_space = model  # First argument is embedding space
+        try:
+            n_folds = int(sys.argv[3])
+        except ValueError:
+            print_error(f"n_folds must be an integer, got: {sys.argv[3]}")
+            return
+        
+        split = sys.argv[4]
+        
+        success = handle_kfold_validation(embedding_space, n_folds, split)
+        if not success:
+            print_error("Failed to run k-fold cross-validation")
         return
     
     mode = sys.argv[2] if len(sys.argv) > 2 else "classifier"
@@ -844,7 +1029,7 @@ def main():
     # Validate mode
     if mode not in ["classifier", "embedder", "all_templates"]:
         print(f"Unknown mode: {mode}")
-        print("Available modes: classifier, embedder, all_templates, combination, knn, few-shot")
+        print("Available modes: classifier, embedder, all_templates, combination, knn, few-shot, kfold")
         return
     
     # Handle different model types and modes

@@ -2,6 +2,8 @@ import pandas as pd
 from pathlib import Path
 
 
+TRAIN_SET_SIZE = 1281167
+
 def calc_precision(df):
     if 'original_label' not in df.columns or 'top_1_pred' not in df.columns:
         print("Warning: Required columns 'original_label' or 'top_1_pred' not found")
@@ -26,7 +28,7 @@ def calc_cls_precision():
     print('🚀 Starting VL classification precision calculation...')
     
     # Check if the required file exists
-    input_file = Path('../../results/vlm/SigLIP2/SigLIP2_classifier_avg_prime_mod_train1.csv')
+    input_file = Path('../../results/vlm/SigLIP2/SigLIP2_classifier_avg_prime_mod_train.csv')
     if not input_file.exists():
         print(f"❌ Error: Required input file not found!")
         print(f"📍 Expected file location: {input_file.absolute()}")
@@ -35,6 +37,7 @@ def calc_cls_precision():
         return
     
     df = pd.read_csv(input_file)
+    assert len(df) == TRAIN_SET_SIZE, f"Expected {TRAIN_SET_SIZE} samples, but got {len(df)}"
 
     output_dir = Path(f'../../results/vlm/SigLIP2')
     output_dir.mkdir(exist_ok=True)

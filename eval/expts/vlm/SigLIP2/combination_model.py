@@ -80,7 +80,7 @@ def combine_predictions(k_value, verbose=False):
         return None, None
     
     # Merge the dataframes on img_id
-    merged_df = pd.merge(knn_df[['original_label', 'img_id', 'k_1_pred']], 
+    merged_df = pd.merge(knn_df[['original_label', 'img_id', f'k_{k_value}_pred']],
                         vlm_df[['img_id', 'top_1_pred']], 
                         on='img_id', 
                         how='inner')
@@ -90,13 +90,13 @@ def combine_predictions(k_value, verbose=False):
     assert len(merged_df) == 50000
     
     # Add precision values for both predictions
-    merged_df['knn_precision'] = merged_df['k_1_pred'].map(knn_precision_dict)
+    merged_df['knn_precision'] = merged_df[f'k_{k_value}_pred'].map(knn_precision_dict)
     merged_df['vlm_precision'] = merged_df['top_1_pred'].map(vlm_precision_dict)
     
     # Choose the best prediction based on precision
     def choose_best_prediction(row):
         if row['knn_precision'] > row['vlm_precision']:
-            return row['k_1_pred']
+            return row[f'k_{k_value}_pred']
         else:
             return row['top_1_pred']
     
@@ -133,7 +133,8 @@ def combine_predictions(k_value, verbose=False):
             clean_labels_path, 
             directory='../results/combination_model', 
             filename=f'SigLIP2_combined_k{k_value}',
-            project_root=Path(__file__).parent.parent.parent.parent
+            project_root=Path(__file__).parent.parent.parent.parent,
+            verbose=verbose
         )
         if verbose:
             print(f"\n🎯 Combined accuracy: {combined_val_acc:.4f}% (Clean: {combined_clean_acc:.4f}%)")
@@ -143,7 +144,7 @@ def combine_predictions(k_value, verbose=False):
 
     # Save detailed results
     output_file = output_dir / f'SigLIP2_combined_k{k_value}_detailed.csv'
-    result_df = merged_df[['original_label', 'img_id', 'k_1_pred', 'top_1_pred', 
+    result_df = merged_df[['original_label', 'img_id', f'k_{k_value}_pred', 'top_1_pred',
                           'combined_pred', 'knn_precision', 'vlm_precision']]
     result_df.to_csv(output_file, index=False)
     
@@ -155,16 +156,20 @@ def combine_predictions(k_value, verbose=False):
 
 
 if __name__ == "__main__":
+    verbose = False
     k_values = [1, 3, 5, 7, 9, 11, 13, 21, 51]
     results = []
     
     print("🚀 Starting combination model evaluation for all k values...")
-    print("=" * 60)
-    
+
+    if verbose:
+        print("=" * 60)
+
     for i, k in enumerate(k_values, 1):
-        print(f"Processing k={k} ({i}/{len(k_values)})")
+        if verbose:
+            print(f"Processing k={k} ({i}/{len(k_values)})")
         
-        val_acc, clean_acc = combine_predictions(k_value=k, verbose=False)
+        val_acc, clean_acc = combine_predictions(k_value=k, verbose=verbose)
         
         if val_acc is not None and clean_acc is not None:
             results.append({
@@ -184,15 +189,6 @@ if __name__ == "__main__":
     
     for result in results:
         print(f"{result['k']:<4} {result['validation_accuracy']:<18.4f} {result['clean_accuracy']:<15.4f}")
-    
-    if results:
-        # Find best performing k values
-        best_val = max(results, key=lambda x: x['validation_accuracy'])
-        best_clean = max(results, key=lambda x: x['clean_accuracy'])
-        
-        print("-" * 60)
-        print(f"🏆 Best validation accuracy: k={best_val['k']} ({best_val['validation_accuracy']:.4f}%)")
-        print(f"🏆 Best clean accuracy: k={best_clean['k']} ({best_clean['clean_accuracy']:.4f}%)")
-    
+
     print("=" * 60)
     print("✅ All combination models completed successfully!")
