@@ -24,12 +24,12 @@ def main(cfg: DictConfig) -> None:
     print(f"K = {cfg.test.topk}, Mode = {cfg.test.mode}")
     print(f"Split = {cfg.test.split}")
     
-    # Initialize and run KNN classifier
+    # Initialize and run k-NN classifier
     knn = KNNClassifier(cfg)
     knn.run()
     
     elapsed_time = time.time() - start_time
-    print(f"KNN classification completed in {elapsed_time:.2f} seconds.")
+    print(f"k-NN classification completed in {elapsed_time:.2f} seconds.")
 
 if __name__ == '__main__':
     main()

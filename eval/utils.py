@@ -33,7 +33,43 @@ class EmbsLoader:
         return np.load(file_path, allow_pickle=True).item()
     
     def get_train_embeddings(self) -> Dict:
-        return self.__load_embeddings(f'{self.embs_space}_train.npy')
+        # Try to load from 4 parts first (new format)
+        try:
+            all_labels = []
+            all_image_names = []
+            all_embeddings = []
+            
+            for part_num in range(1, 5):  # parts 1, 2, 3, 4
+                part_file = f'{self.embs_space}_train_part{part_num}.npy'
+                part_path = os.path.join(self.embeddings_dir, part_file)
+                
+                if not os.path.exists(part_path):
+                    # If any part is missing, fall back to single file
+                    print(f"Part file {part_file} not found, falling back to single train file")
+                    return self.__load_embeddings(f'{self.embs_space}_train.npy')
+                
+                part_data = np.load(part_path, allow_pickle=True).item()
+                all_labels.extend(part_data['label'])
+                all_image_names.extend(part_data['image_name'])
+                all_embeddings.append(part_data['embedding'])
+            
+            # Concatenate all embeddings
+            concatenated_embeddings = np.vstack(all_embeddings)
+            
+            # Create combined data dictionary
+            combined_data = {
+                'label': all_labels,
+                'image_name': all_image_names,
+                'embedding': concatenated_embeddings
+            }
+            
+            print(f"✓ Loaded train embeddings from 4 parts: {len(all_labels)} total samples, embedding shape: {concatenated_embeddings.shape}")
+            return combined_data
+            
+        except Exception as e:
+            # Fall back to single file if there's any error
+            print(f"Error loading from parts, falling back to single file: {e}")
+            return self.__load_embeddings(f'{self.embs_space}_train.npy')
     
     def get_val_embeddings(self) -> Dict:
         return self.__load_embeddings(f'{self.embs_space}_val.npy')
@@ -229,11 +265,43 @@ def save_embeddings_to_npy(results, model_name, dataloader_name, convert_labels_
     # Save to /eval/results/embeddings/{model_name}/ directory structure
     save_dir = project_root / 'eval' / 'results' / 'embeddings' / model_name
     save_dir.mkdir(parents=True, exist_ok=True)
-    save_path = save_dir / f'{model_name}_{dataloader_name}.npy'
-    np.save(save_path, data)
-    print(f'✓ Embeddings data saved to: {save_path}')
     
-    return save_path
+    # Check if we need to split the data into 4 files for train data
+    if dataloader_name.lower() == 'train':
+        total_samples = len(data['label'])
+        chunk_size = total_samples // 4
+        save_paths = []
+        
+        for i in range(4):
+            start_idx = i * chunk_size
+            if i == 3:  # Last chunk gets remaining samples
+                end_idx = total_samples
+            else:
+                end_idx = (i + 1) * chunk_size
+            
+            # Create chunk data
+            chunk_data = {
+                'label': data['label'][start_idx:end_idx],
+                'image_name': data['image_name'][start_idx:end_idx],
+                'embedding': data['embedding'][start_idx:end_idx]
+            }
+            
+            # Save chunk with postfix
+            postfix = f"_part{i+1}"
+            save_path = save_dir / f'{model_name}_{dataloader_name}{postfix}.npy'
+            np.save(save_path, chunk_data)
+            save_paths.append(save_path)
+            print(f'✓ Embeddings data chunk {i+1}/4 saved to: {save_path} ({len(chunk_data["label"])} samples)')
+        
+        print(f'✓ Total embeddings split into 4 files: {total_samples} samples')
+        return save_path[0]
+    else:
+        # Normal single file save for non-train data
+        save_path = save_dir / f'{model_name}_{dataloader_name}.npy'
+        np.save(save_path, data)
+        print(f'✓ Embeddings data saved to: {save_path}')
+        
+        return save_path
 
 
 def calculate_knn_accuracy(predictions_df: pd.DataFrame, clean_labels_path: str = None, k_values: List[int] = None):

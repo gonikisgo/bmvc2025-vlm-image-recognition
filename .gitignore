@@ -47,3 +47,7 @@ outputs/
 # Temporary files
 *.tmp
 *.temp
+
+# Results folder - ignore all contents but keep .gitkeep
+eval/results/*
+!eval/results/.gitkeep
